@@ -175,6 +175,23 @@ equals the gold answer. The committed file was generated without a fixed seed,
 so `generate` (seeded) produces a different sample; use the committed file to
 reproduce the reported Best-of-N numbers.
 
+The labels stored in that file come from an answer parser that truncated gold
+answers at thousands commas and read `26.00` as `00` (327 of 21,104 labels
+wrong, in 84 questions). Re-grade before converting:
+
+```bash
+python prepare_data.py relabel   # -> data/gsm8k_qwen0.5b_bon16_relabeled.jsonl (old values kept as *_v0)
+python prepare_data.py convert   # reads the relabeled file by default
+python -m eval.eval_bon --references_only --eval_file data/single_eval.jsonl \
+  --source_file data/gsm8k_qwen0.5b_bon16_relabeled.jsonl \
+  --results_dir results_final --out_name bon_references_relabeled
+```
+
+Existing `cache/single_eval` caches can be reused: they encode only the steps,
+and `eval_single_from_cache --eval_file` / `eval_coin_flip_baseline
+--single_eval_file` take the labels from `single_eval.jsonl`. `eval_bon`
+refuses a `--source_file` graded differently from `--eval_file`.
+
 `convert` splits each candidate into steps at blank lines and writes
 
 ```json

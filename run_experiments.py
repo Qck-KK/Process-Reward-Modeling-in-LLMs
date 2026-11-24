@@ -8,7 +8,13 @@ import sys
 
 TRAIN_CACHE = "cache/train_fixed"
 VAL_CACHE = "cache/val_fixed"
-BON_CACHE = "cache/single_eval"          
+BON_CACHE = "cache/single_eval"
+# Candidates re-graded by `prepare_data.py relabel` (the committed file keeps the
+# original labels, whose answer parser truncated "1,200" and "26.00"). The cache
+# encodes only the steps, which relabeling does not change, so it stays valid;
+# labels are read from single_eval.jsonl rather than from the cache.
+BON_SOURCE = "data/gsm8k_qwen0.5b_bon16_relabeled.jsonl"
+SINGLE_EVAL = "data/single_eval.jsonl"
 FINAL_CKPT = "checkpoints/final"
 FINAL_OUT = "results_final"
 ABL_CKPT = "checkpoints/ablations"
@@ -90,7 +96,7 @@ def training_steps(groups):
 def bon(checkpoint_dir, heads, results_dir):
     return [PY, "-m", "eval.eval_bon", "--cache_dir", BON_CACHE,
             "--eval_file", "data/single_eval.jsonl",
-            "--source_file", "data/gsm8k_qwen0.5b_bon16.jsonl",
+            "--source_file", BON_SOURCE,
             "--checkpoint_dir", checkpoint_dir, "--heads", *heads,
             "--aggs", "min", "mean", "last", "--ks", "1", "2", "4", "8", "16",
             "--subsets_per_question", "20", "--bootstrap_samples", "2000",
@@ -112,9 +118,10 @@ def main_eval_steps(out=None, ckpt=None, pattern="{head}_head.pt"):
     for head in ALL_HEADS:
         steps.append([PY, "-m", "eval.eval_single_from_cache", "--cache_dir", BON_CACHE,
                       "--head", head, "--checkpoint", checkpoint(head), "--agg", "min", *SPLIT,
-                      "--results_dir", out])
+                      "--eval_file", SINGLE_EVAL, "--results_dir", out])
     steps.append([PY, "-m", "eval.eval_coin_flip_baseline", "--val_cache_dir", VAL_CACHE,
-                  "--single_cache_dir", BON_CACHE, "--results_dir", out,
+                  "--single_cache_dir", BON_CACHE, "--single_eval_file", SINGLE_EVAL,
+                  "--results_dir", out,
                   "--trials", "100", "--seed", "42", *SPLIT])
     steps.append([PY, "-m", "analysis.analyze_head_behavior", "--cache_dir", VAL_CACHE,
                   "--checkpoint_dir", ckpt, *pat, "--results_dir", out, "--heads", *ALL_HEADS,

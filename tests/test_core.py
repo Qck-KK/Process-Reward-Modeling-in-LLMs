@@ -18,8 +18,21 @@ from eval.eval_utils import (
     roc_auc,
 )
 from dataset import parse_math_shepherd
-from prepare_data import gsm8k_gold, last_number, solution_steps
-from eval.eval_bon import majority_choice, weighted_vote_choice
+from prepare_data import (
+    gsm8k_gold,
+    is_correct,
+    last_number,
+    normalize_number,
+    relabel_questions,
+    solution_steps,
+)
+from eval.eval_bon import (
+    build_groups,
+    draw_subsets,
+    majority_choice,
+    reference_curves,
+    weighted_vote_choice,
+)
 from pqm_loss import bce_step_loss, pqm_loss
 from reward_heads import (
     AttentionPoolingHead,
@@ -61,6 +74,59 @@ class PrepareDataTests(unittest.TestCase):
         self.assertEqual(gsm8k_gold("so 3+4=7\n#### 7"), "7")
         self.assertEqual(last_number("It costs $1,250, i.e. 1250 in total."), "1250")
         self.assertIsNone(last_number("no digits here"))
+
+    def test_gold_answer_keeps_thousands(self):
+        """'#### 1,200' used to be read as 1 (the regex stopped at the comma)."""
+        self.assertEqual(gsm8k_gold("4 * 300 = <<4*300=1200>>1200\n#### 1,200"), "1200")
+        self.assertEqual(gsm8k_gold("#### 1,450,000"), "1450000")
+        self.assertEqual(gsm8k_gold("#### -3"), "-3")
+        self.assertEqual(gsm8k_gold("a #### 5 and #### 6"), "6")
+        self.assertIsNone(gsm8k_gold("no marker 12"))
+
+    def test_prediction_reads_whole_decimals(self):
+        """'26.00' used to be read as 00, '$0.90' as 90."""
+        self.assertEqual(last_number("Total: $26.00"), "26")
+        self.assertEqual(last_number("She has $0.90 left."), "0.9")
+        self.assertEqual(last_number("so 2.50 dollars"), "2.5")
+        self.assertEqual(last_number("The answer is 18."), "18")
+        self.assertEqual(last_number("$1,250.50 in total"), "1250.5")
+
+    def test_prediction_numbers_and_separators(self):
+        self.assertEqual(last_number("a population of 1,30,000 people"), "130000")
+        self.assertEqual(last_number("pick 3,4,5"), "5")
+        self.assertEqual(last_number("x = -3"), "-3")
+        self.assertEqual(last_number("pages 5-3"), "3")
+        self.assertEqual(last_number("1,200 and then 7"), "7")
+
+    def test_normalisation_and_grading(self):
+        self.assertEqual(normalize_number("1,200"), "1200")
+        self.assertEqual(normalize_number("-0.0"), "0")
+        self.assertIsNone(normalize_number("abc"))
+        self.assertEqual(is_correct("18.0", "18"), 1)
+        self.assertEqual(is_correct("0.9", "90"), 0)
+        self.assertEqual(is_correct(None, "1"), 0)
+
+    def test_relabel_keeps_old_values_and_counts_changes(self):
+        questions = [{"question": "Q1", "gold_answer": "1", "candidates": [
+            {"text": "so 1,200", "pred_num": "200", "final_correct": 0},
+            {"text": "so 1", "pred_num": "1", "final_correct": 1}]},
+            {"question": "Q2", "gold_answer": "26", "candidates": [
+            {"text": "costs $26.00", "pred_num": "00", "final_correct": 0}]}]
+        golds = [{"question": "Q1", "gold_answer": "1200"},
+                 {"question": "Q2", "gold_answer": "26"}]
+        records, stats = relabel_questions(questions, golds)
+        self.assertEqual([c["final_correct"] for c in records[0]["candidates"]], [1, 0])
+        self.assertEqual(records[1]["candidates"][0]["final_correct"], 1)
+        self.assertEqual(records[0]["gold_answer_v0"], "1")
+        self.assertEqual(records[0]["candidates"][0]["pred_num_v0"], "200")
+        self.assertEqual(stats["label_changed"], 3)
+        self.assertEqual(stats["questions_with_label_change"], 2)
+        # Relabeling its own output is a no-op on the labels and keeps the originals.
+        again, _ = relabel_questions(records, golds)
+        self.assertEqual(again[0]["candidates"][0]["final_correct_v0"], 0)
+        self.assertEqual(again, records)
+        with self.assertRaises(RuntimeError):
+            relabel_questions(questions, [{"question": "other", "gold_answer": "1"}] * 2)
 
 
 class ParserTests(unittest.TestCase):
@@ -139,6 +205,19 @@ class BestOfNTests(unittest.TestCase):
         weights = torch.tensor([0.9, 0.9, 0.1])
         self.assertEqual(weighted_vote_choice(preds, weights, [0, 1, 2]), 2)
         self.assertEqual(weighted_vote_choice(["", ""], weights, [0, 1]), 0)
+
+    def test_reference_selectors_on_full_candidate_sets(self):
+        # Question 0: answers 4, 4, 5 with 5 correct; question 1: no correct candidate.
+        groups = build_groups([0, 0, 0, 1, 1])
+        correct = torch.tensor([0, 0, 1, 0, 0])
+        preds = ["4", "4", "5", "1", "2"]
+        generator = torch.Generator().manual_seed(0)
+        subsets = draw_subsets(groups, [1, 3], 4, generator)
+        self.assertEqual(subsets[3], [[(0, 1, 2)], [(3, 4)]])
+        curves = reference_curves(subsets, correct, preds)
+        self.assertEqual(curves[("oracle", "-", "reference")][3].tolist(), [1.0, 0.0])
+        self.assertEqual(curves[("majority_vote", "-", "reference")][3].tolist(), [0.0, 0.0])
+        self.assertEqual(curves[("random", "-", "reference")][3].tolist(), [0.0, 0.0])
 
 
 class ArchitectureTests(unittest.TestCase):

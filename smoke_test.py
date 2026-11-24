@@ -49,9 +49,12 @@ def main():
     single = os.path.join(data, "single_eval.jsonl")
     ckpt_of = lambda head: os.path.join(ckpt, head + "_head.pt")
 
+    bon_relabeled = os.path.join(data, "bon_relabeled.jsonl")
     stages = [
+        ("prepare: re-grade candidates",
+         [PY, "prepare_data.py", "relabel", "--source", bon_source, "--out", bon_relabeled]),
         ("prepare: convert candidates",
-         [PY, "prepare_data.py", "convert", "--source", bon_source, "--out", single]),
+         [PY, "prepare_data.py", "convert", "--source", bon_relabeled, "--out", single]),
         ("encode: training set",
          [PY, "precompute_embeddings.py", "--train_file", os.path.join(data, "train.jsonl"),
           "--cache_dir", train_cache, "--batch_size", "8", *model]),
@@ -83,10 +86,12 @@ def main():
     stages += [
         ("evaluate: single solutions (GSM8K)",
          [PY, "-m", "eval.eval_single_from_cache", "--cache_dir", bon_cache, "--head", "mlp",
-          "--checkpoint", ckpt_of("mlp"), "--agg", "min", *split, "--results_dir", res]),
+          "--checkpoint", ckpt_of("mlp"), "--agg", "min", *split, "--eval_file", single,
+          "--results_dir", res]),
         ("evaluate: coin-flip baseline",
          [PY, "-m", "eval.eval_coin_flip_baseline", "--val_cache_dir", val_cache,
-          "--single_cache_dir", bon_cache, "--results_dir", res, "--trials", "10", "--seed", "42",
+          "--single_cache_dir", bon_cache, "--single_eval_file", single,
+          "--results_dir", res, "--trials", "10", "--seed", "42",
           *split]),
         ("analyse: behaviour and perturbations",
          [PY, "-m", "analysis.analyze_head_behavior", "--cache_dir", val_cache,
@@ -113,7 +118,7 @@ def main():
           "--results_dir", res, "--out_name", "pqm_vs_bce", *boot, *split]),
         ("evaluate: Best-of-N vs majority voting",
          [PY, "-m", "eval.eval_bon", "--cache_dir", bon_cache, "--eval_file", single,
-          "--source_file", bon_source, "--checkpoint_dir", ckpt, "--heads", *HEADS,
+          "--source_file", bon_relabeled, "--checkpoint_dir", ckpt, "--heads", *HEADS,
           "--aggs", "min", "mean", "last", "--ks", "1", "4", "16",
           "--subsets_per_question", "2", *boot, "--results_dir", res, "--seed", "42"]),
         ("evaluate: in-distribution single solutions",

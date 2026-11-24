@@ -1,4 +1,5 @@
 import glob
+import json
 import os
 
 import torch
@@ -43,6 +44,28 @@ def load_step_cache_labels(cache_dir: str):
         for x in mask_list
     ])
     return labels, step_mask
+
+
+def load_final_correct(eval_file: str) -> torch.Tensor:
+    """final_correct per candidate from a single_eval.jsonl, in file order.
+
+    Candidate caches store the labels they were built with; reading them from
+    the eval file instead lets a cache be reused after the candidates are
+    re-graded (`prepare_data.py relabel`), since the steps it encodes do not
+    change.
+    """
+    with open(eval_file, encoding="utf-8") as f:
+        return torch.tensor([int(json.loads(line)["final_correct"]) for line in f if line.strip()])
+
+
+def override_labels(cached: torch.Tensor, eval_file: str) -> torch.Tensor:
+    labels = load_final_correct(eval_file)
+    if labels.numel() != cached.numel():
+        raise RuntimeError("eval_file has {0} candidates, cache {1}".format(
+            labels.numel(), cached.numel()))
+    changed = int((labels != cached.long().cpu()).sum())
+    print("[labels] final_correct from {0}; {1} differ from the cache".format(eval_file, changed))
+    return labels.to(cached.device)
 
 
 def deterministic_example_split(n_examples: int, calibration_fraction: float = 0.5, seed: int = 42):

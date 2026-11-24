@@ -16,6 +16,7 @@ from eval.eval_utils import (
     binary_accuracy,
     deterministic_example_split,
     get_device,
+    override_labels,
     pairwise_separation,
     roc_auc,
 )
@@ -32,6 +33,9 @@ def main():
     parser.add_argument("--device", default=None)
     parser.add_argument("--calibration_fraction", type=float, default=0.5)
     parser.add_argument("--split_seed", type=int, default=42)
+    parser.add_argument("--eval_file", default=None,
+                        help="single_eval.jsonl whose final_correct replaces the labels "
+                             "stored in the cache (needed after `prepare_data.py relabel`).")
     args = parser.parse_args()
 
     device = get_device(args.device)
@@ -73,6 +77,8 @@ def main():
 
     scores = torch.cat(all_scores)
     labels = torch.cat(all_labels)
+    if args.eval_file:
+        labels = override_labels(labels, args.eval_file)
 
     calibration_mask, test_mask = deterministic_example_split(
         len(scores), args.calibration_fraction, args.split_seed

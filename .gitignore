@@ -6,6 +6,9 @@ runs/
 data/*
 !data/dummy_train.jsonl
 !data/gsm8k_qwen0.5b_bon16.jsonl
+# Official GSM8K test gold answers (MIT licence, openai/grade-school-math), used
+# by `prepare_data.py relabel`.
+!data/gsm8k_test_gold.jsonl
 
 checkpoints/
 *.pt

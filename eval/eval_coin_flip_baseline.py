@@ -6,7 +6,7 @@ import os
 
 import torch
 
-from eval.eval_utils import deterministic_example_split, pairwise_separation
+from eval.eval_utils import deterministic_example_split, override_labels, pairwise_separation
 
 
 def load_step_labels(cache_dir):
@@ -89,6 +89,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--val_cache_dir", required=True)
     parser.add_argument("--single_cache_dir", default=None)
+    parser.add_argument("--single_eval_file", default=None,
+                        help="single_eval.jsonl whose final_correct replaces the cached labels.")
     parser.add_argument("--results_dir", required=True)
     parser.add_argument("--trials", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
@@ -148,6 +150,8 @@ def main():
 
     if args.single_cache_dir and os.path.exists(args.single_cache_dir):
         single_labels = load_single_labels(args.single_cache_dir)
+        if args.single_eval_file:
+            single_labels = override_labels(single_labels, args.single_eval_file)
         _, single_test_mask = deterministic_example_split(
             len(single_labels), args.calibration_fraction, args.split_seed
         )

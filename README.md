@@ -20,6 +20,23 @@ for Best-of-N, question-level) paired bootstrap intervals over 2,000 resamples,
 and "significant" means significant after Holm correction within the relevant
 family of comparisons.
 
+> **Correction pending (2026-11, answer grading).** The Best-of-N candidates
+> were graded with an answer parser that cut gold answers at the thousands
+> comma (`#### 1,200` read as `1`) and read decimals by their fractional part
+> (`26.00` read as `00`). Checked against the official GSM8K test set, 327 of
+> 21,104 candidate labels (1.55%) were wrong, in 84 of 1,319 questions (6.4%);
+> 302 correct candidates had been marked wrong and 25 wrong ones marked correct.
+> `prepare_data.py relabel` re-grades them. Numbers that need only the labels
+> were recomputed and are given below next to the originals
+> ([`results_final/bon_references_relabeled.csv`](results_final/bon_references_relabeled.csv),
+> counts in [`results_final/bon_relabel_stats.json`](results_final/bon_relabel_stats.json));
+> every number that needs PRM scores -- all head-based Best-of-N selectors,
+> their differences to majority voting and Holm tests, and the GSM8K
+> single-solution AUCs -- **still has to be re-run** and is quoted below as
+> originally computed. The embedding caches and checkpoints stay valid
+> (relabeling does not change the encoded steps), so this is a re-scoring, not
+> a retraining.
+
 ## What the experiments found
 
 **Contextual heads win on held-out step scoring.** Held-out step ROC-AUC, each
@@ -76,13 +93,20 @@ survive the change of generator and task.
 candidates per GSM8K test question sampled from Qwen2.5-0.5B-Instruct
 (temperature 0.7, top-p 0.95; 1,319 questions):
 
-| selector | BoN@16 [95% CI] |
-|---|---|
-| oracle (any of 16 correct) | 0.7604 [0.7369, 0.7839] |
-| **majority voting** (no reward model) | **0.4655** [0.4374, 0.4927] |
-| best frozen head, PRM-weighted voting (`attention`, mean) | 0.4761, vs majority +0.011 [−0.003, +0.024], n.s. |
-| best frozen head, highest score (`attention`, last) | 0.3699, vs majority −0.096 [−0.121, −0.070] |
-| random selection | 0.3282 [0.3002, 0.3555] |
+| selector | BoN@16 [95% CI] | re-graded labels (2026-11) |
+|---|---|---|
+| oracle (any of 16 correct) | 0.7604 [0.7369, 0.7839] | 0.7847 [0.7612, 0.8074] |
+| **majority voting** (no reward model) | **0.4655** [0.4374, 0.4927] | **0.4958** [0.4685, 0.5231] |
+| best frozen head, PRM-weighted voting (`attention`, mean) | 0.4761, vs majority +0.011 [−0.003, +0.024], n.s. | needs re-run |
+| best frozen head, highest score (`attention`, last) | 0.3699, vs majority −0.096 [−0.121, −0.070] | needs re-run |
+| random selection | 0.3282 [0.3002, 0.3555] | 0.3374 [0.3093, 0.3647] |
+
+Under the corrected grading majority voting gains 0.030 at N=16 (0.4655 →
+0.4958; 0.3743 → 0.3929 at N=4, 0.4313 → 0.4544 at N=8). Weighted voting and
+argmax selectors gain from the same re-grading, by amounts that cannot be
+known without re-scoring, so the comparisons below against majority voting --
+including the LoRA arm's small margins of +0.021 to +0.027 -- are unverified
+until `eval.eval_bon` is re-run on the relabeled file.
 
 Of 36 frozen selectors (6 heads x 3 aggregations x {argmax, weighted vote}),
 none beats majority voting after Holm correction and 23 are significantly worse;
@@ -162,6 +186,24 @@ does). The study's earlier history -- a protocol that fixed `lr=1e-3`, which the
 first learning-rate grid showed to be the worst value for every head and which
 had inverted the architecture ranking -- also predates the fix, and `1e-3` was
 not re-tested on corrected data.
+
+### Best-of-N answer grading
+
+`prepare_data.py` originally extracted answers with `-?\d+`: the gold answer
+after `####` stopped at the first comma (14 of 1,319 gold answers truncated,
+e.g. `1,200` → `1`), and a prediction took the last digit run, so `26.00`
+became `00` and `$0.90` became `90`. The parser now reads the whole number
+(digit-group commas, decimals, sign) and normalises it (`26.00` → `26`).
+The committed `data/gsm8k_qwen0.5b_bon16.jsonl` is left untouched as the
+record of what the reported numbers used; `prepare_data.py relabel` writes a
+re-graded copy, `data/gsm8k_qwen0.5b_bon16_relabeled.jsonl`, keeping the old
+values as `gold_answer_v0`, `pred_num_v0` and `final_correct_v0`. Gold answers
+come from `data/gsm8k_test_gold.jsonl`, extracted from the official GSM8K test
+set (`prepare_data.py gold`). Grading is strict numeric equality, so `$0.90`
+for a question asking for cents (gold `90`) counts as wrong (10 candidates in
+two questions). `eval.eval_bon --references_only` recomputes oracle, random
+and majority voting from the labels alone; with the old file it reproduces
+the reported reference rows exactly.
 
 ## Limitations
 
@@ -255,7 +297,8 @@ To reproduce the reported experiments:
 
 ```bash
 python prepare_data.py split       # Math-Shepherd -> data/train.jsonl, data/val.jsonl
-python prepare_data.py convert     # bundled candidates -> data/single_eval.jsonl
+python prepare_data.py relabel     # re-grade the bundled candidates -> data/gsm8k_qwen0.5b_bon16_relabeled.jsonl
+python prepare_data.py convert     # relabeled candidates -> data/single_eval.jsonl
 python precompute_embeddings.py --train_file data/train.jsonl --cache_dir cache/train_fixed
 python precompute_embeddings.py --train_file data/val.jsonl --cache_dir cache/val_fixed
 python precompute_eval_embeddings.py --eval_file data/single_eval.jsonl --cache_dir cache/single_eval

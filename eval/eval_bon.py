@@ -73,118 +73,63 @@ def weighted_vote_choice(preds, weights, subset):
     return subset[0]
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--cache_dir", required=True)
-    parser.add_argument("--eval_file", required=True,
-                        help="single_eval.jsonl carrying question_id/candidate_id.")
-    parser.add_argument("--source_file", default=None,
-                        help="Original BoN file with pred_num, for majority voting.")
-    parser.add_argument("--checkpoint_dir", required=True)
-    parser.add_argument("--checkpoint_pattern", default="{head}_head.pt")
-    parser.add_argument("--heads", nargs="+", default=list(HEAD_CHOICES))
-    parser.add_argument("--aggs", nargs="+", default=["min", "mean", "last"])
-    parser.add_argument("--ks", nargs="+", type=int, default=[1, 2, 4, 8, 16])
-    parser.add_argument("--subsets_per_question", type=int, default=20)
-    parser.add_argument("--bootstrap_samples", type=int, default=2000)
-    parser.add_argument("--results_dir", required=True)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", default=None)
-    args = parser.parse_args()
-
-    device = get_device(args.device)
-    os.makedirs(args.results_dir, exist_ok=True)
-
-    records = [json.loads(line) for line in open(args.eval_file, encoding="utf-8")]
-    correct = torch.tensor([int(r["final_correct"]) for r in records])
-    question_of = [r["question_id"] for r in records]
+def build_groups(question_of):
     n_questions = max(question_of) + 1
     groups = [[] for _ in range(n_questions)]
     for index, qid in enumerate(question_of):
         groups[qid].append(index)
+    return groups
 
-    preds = None
-    if args.source_file:
-        source = [json.loads(line) for line in open(args.source_file, encoding="utf-8")]
-        preds = [c.get("pred_num", "") for d in source for c in d["candidates"]]
-        if len(preds) != len(records):
-            raise RuntimeError("source_file does not align with eval_file")
 
-    shard_paths = sorted(glob.glob(os.path.join(args.cache_dir, "shard_*.pt")))
-    assert shard_paths, "No cached shards in " + args.cache_dir
-    with open(os.path.join(args.cache_dir, "hidden_size.txt")) as f:
-        hidden_size = int(f.read().strip())
-    n_cached = sum(torch.load(p, map_location="cpu")["final_correct"].shape[0]
-                   for p in shard_paths)
-    if n_cached != len(records):
-        raise RuntimeError("cache holds {0} candidates, eval_file {1}".format(
-            n_cached, len(records)))
-
-    # Fixed subsets, shared by every head and baseline so the comparison is paired.
-    generator = torch.Generator().manual_seed(args.seed)
+def draw_subsets(groups, ks, subsets_per_question, generator):
+    """Fixed candidate subsets, shared by every selector so comparisons are paired."""
     subsets = {}
-    for k in args.ks:
+    for k in ks:
         per_question = []
-        for qid in range(n_questions):
-            members = groups[qid]
+        for members in groups:
             if k >= len(members):
                 per_question.append([tuple(members)])
                 continue
             draws = []
-            for _ in range(args.subsets_per_question):
+            for _ in range(subsets_per_question):
                 order = torch.randperm(len(members), generator=generator)[:k]
                 draws.append(tuple(members[int(i)] for i in order))
             per_question.append(draws)
         subsets[k] = per_question
+    return subsets
 
-    def evaluate(pick_fn):
-        out = {}
-        for k in args.ks:
-            per_question = torch.zeros(n_questions)
-            for qid in range(n_questions):
-                hits = [int(correct[pick_fn(subset)]) for subset in subsets[k][qid]]
-                per_question[qid] = sum(hits) / len(hits)
-            out[k] = per_question
-        return out
 
-    curves = {}
-    for head_name in args.heads:
-        checkpoint = os.path.join(
-            args.checkpoint_dir, args.checkpoint_pattern.format(head=head_name)
-        )
-        if not os.path.exists(checkpoint):
-            raise FileNotFoundError(checkpoint)
-        head = build_reward_head(head_name, hidden_size).to(device)
-        head.load_state_dict(torch.load(checkpoint, map_location=device))
-        for agg in args.aggs:
-            scores = score_cache(head, shard_paths, device, agg)
-            curves[(head_name, agg, "argmax")] = evaluate(
-                lambda subset: max(subset, key=lambda i: float(scores[i]))
-            )
-            if preds is not None:
-                weights = torch.sigmoid(scores)
-                curves[(head_name, agg, "weighted_vote")] = evaluate(
-                    lambda subset: weighted_vote_choice(preds, weights, list(subset))
-                )
-            print("  scored {0:<14} agg={1}".format(head_name, agg))
+def evaluate_selector(pick_fn, subsets, correct):
+    out = {}
+    for k, per_question_subsets in subsets.items():
+        per_question = torch.zeros(len(per_question_subsets))
+        for qid, draws in enumerate(per_question_subsets):
+            hits = [int(correct[pick_fn(subset)]) for subset in draws]
+            per_question[qid] = sum(hits) / len(hits)
+        out[k] = per_question
+    return out
 
-    # References
-    curves[("random", "-", "reference")] = evaluate(lambda subset: subset[0])
-    curves[("oracle", "-", "reference")] = evaluate(
-        lambda subset: max(subset, key=lambda i: int(correct[i]))
-    )
-    majority = None
+
+def reference_curves(subsets, correct, preds):
+    curves = {
+        ("random", "-", "reference"): evaluate_selector(lambda subset: subset[0], subsets, correct),
+        ("oracle", "-", "reference"): evaluate_selector(
+            lambda subset: max(subset, key=lambda i: int(correct[i])), subsets, correct),
+    }
     if preds is not None:
-        majority = evaluate(lambda subset: majority_choice(preds, list(subset)))
-        curves[("majority_vote", "-", "reference")] = majority
+        curves[("majority_vote", "-", "reference")] = evaluate_selector(
+            lambda subset: majority_choice(preds, list(subset)), subsets, correct)
+    return curves
 
+
+def summarize_curves(curves, majority, ks, n_questions, bootstrap_samples, generator):
     rows = []
     question_draws = [
         torch.randint(n_questions, (n_questions,), generator=generator)
-        for _ in range(args.bootstrap_samples)
+        for _ in range(bootstrap_samples)
     ]
     for (head_name, agg, method), curve in curves.items():
-        for k in args.ks:
+        for k in ks:
             per_question = curve[k]
             point = float(per_question.mean())
             samples = [float(per_question[pick].mean()) for pick in question_draws]
@@ -215,21 +160,130 @@ def main():
                 "n_questions": n_questions,
             })
 
-    for k in args.ks:
+    for k in ks:
         family = [row for row in rows if row["k"] == k and row["p_vs_majority"] == row["p_vs_majority"]]
         for row, adjusted in zip(family, holm_adjust([row["p_vs_majority"] for row in family])):
             row["p_holm_vs_majority"] = adjusted
+    return rows
 
-    out_csv = os.path.join(args.results_dir, "bon_results.csv")
+
+def load_source_preds(source_file, records):
+    """pred_num per candidate from the Best-of-N file, aligned with eval_file.
+
+    Refuses a source whose final_correct disagrees with eval_file: that means
+    single_eval.jsonl was converted from a differently graded file (e.g. the
+    committed file with the pre-fix labels instead of the relabeled one).
+    """
+    source = [json.loads(line) for line in open(source_file, encoding="utf-8")]
+    candidates = [c for d in source for c in d["candidates"]]
+    if len(candidates) != len(records):
+        raise RuntimeError("source_file does not align with eval_file")
+    mismatched = sum(int(c["final_correct"]) != int(r["final_correct"])
+                     for c, r in zip(candidates, records))
+    if mismatched:
+        raise RuntimeError(
+            "{0} candidates are graded differently in source_file and eval_file; "
+            "re-run `prepare_data.py convert` on the same source".format(mismatched))
+    return [c.get("pred_num", "") for c in candidates]
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cache_dir", default=None,
+                        help="Candidate embedding cache; required unless --references_only.")
+    parser.add_argument("--eval_file", required=True,
+                        help="single_eval.jsonl carrying question_id/candidate_id.")
+    parser.add_argument("--source_file", default=None,
+                        help="Best-of-N file with pred_num, for majority voting.")
+    parser.add_argument("--checkpoint_dir", default=None,
+                        help="Head checkpoints; required unless --references_only.")
+    parser.add_argument("--checkpoint_pattern", default="{head}_head.pt")
+    parser.add_argument("--heads", nargs="+", default=list(HEAD_CHOICES))
+    parser.add_argument("--aggs", nargs="+", default=["min", "mean", "last"])
+    parser.add_argument("--ks", nargs="+", type=int, default=[1, 2, 4, 8, 16])
+    parser.add_argument("--subsets_per_question", type=int, default=20)
+    parser.add_argument("--bootstrap_samples", type=int, default=2000)
+    parser.add_argument("--results_dir", required=True)
+    parser.add_argument("--out_name", default="bon_results")
+    parser.add_argument("--references_only", action="store_true",
+                        help="Only random / oracle / majority voting; needs no cache or "
+                             "checkpoints. Draws the same subsets and bootstrap "
+                             "resamples as a full run with the same seed.")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", default=None)
+    args = parser.parse_args()
+    if not args.references_only and not (args.cache_dir and args.checkpoint_dir):
+        parser.error("--cache_dir and --checkpoint_dir are required unless --references_only")
+
+    device = get_device(args.device)
+    os.makedirs(args.results_dir, exist_ok=True)
+
+    records = [json.loads(line) for line in open(args.eval_file, encoding="utf-8")]
+    correct = torch.tensor([int(r["final_correct"]) for r in records])
+    groups = build_groups([r["question_id"] for r in records])
+    n_questions = len(groups)
+
+    preds = load_source_preds(args.source_file, records) if args.source_file else None
+
+    shard_paths, hidden_size = [], None
+    if not args.references_only:
+        shard_paths = sorted(glob.glob(os.path.join(args.cache_dir, "shard_*.pt")))
+        assert shard_paths, "No cached shards in " + args.cache_dir
+        with open(os.path.join(args.cache_dir, "hidden_size.txt")) as f:
+            hidden_size = int(f.read().strip())
+        n_cached = sum(torch.load(p, map_location="cpu")["final_correct"].shape[0]
+                       for p in shard_paths)
+        if n_cached != len(records):
+            raise RuntimeError("cache holds {0} candidates, eval_file {1}".format(
+                n_cached, len(records)))
+
+    # Fixed subsets, shared by every head and baseline so the comparison is paired.
+    # Scoring heads draws nothing from the generator, so a references-only run
+    # sees exactly the subsets and resamples of a full run.
+    generator = torch.Generator().manual_seed(args.seed)
+    subsets = draw_subsets(groups, args.ks, args.subsets_per_question, generator)
+
+    curves = {}
+    heads = [] if args.references_only else args.heads
+    for head_name in heads:
+        checkpoint = os.path.join(
+            args.checkpoint_dir, args.checkpoint_pattern.format(head=head_name)
+        )
+        if not os.path.exists(checkpoint):
+            raise FileNotFoundError(checkpoint)
+        head = build_reward_head(head_name, hidden_size).to(device)
+        head.load_state_dict(torch.load(checkpoint, map_location=device))
+        for agg in args.aggs:
+            scores = score_cache(head, shard_paths, device, agg)
+            curves[(head_name, agg, "argmax")] = evaluate_selector(
+                lambda subset: max(subset, key=lambda i: float(scores[i])), subsets, correct
+            )
+            if preds is not None:
+                weights = torch.sigmoid(scores)
+                curves[(head_name, agg, "weighted_vote")] = evaluate_selector(
+                    lambda subset: weighted_vote_choice(preds, weights, list(subset)),
+                    subsets, correct
+                )
+            print("  scored {0:<14} agg={1}".format(head_name, agg))
+
+    curves.update(reference_curves(subsets, correct, preds))
+    majority = curves.get(("majority_vote", "-", "reference"))
+    rows = summarize_curves(curves, majority, args.ks, n_questions,
+                            args.bootstrap_samples, generator)
+
+    out_csv = os.path.join(args.results_dir, args.out_name + ".csv")
     with open(out_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
-    out_json = os.path.join(args.results_dir, "bon_results.json")
+    out_json = os.path.join(args.results_dir, args.out_name + ".json")
     with open(out_json, "w") as f:
         json.dump({
             "cache_dir": args.cache_dir,
             "checkpoint_dir": args.checkpoint_dir,
+            "eval_file": args.eval_file,
+            "source_file": args.source_file,
+            "references_only": args.references_only,
             "n_questions": n_questions,
             "n_candidates": len(records),
             "subsets_per_question": args.subsets_per_question,
