@@ -27,7 +27,7 @@ The three items originally excluded for compute reasons have now all been comple
 
 The parser now splits by the `ки` marker and reads the `+` / `-` label from the aligned location in `label`. Records that do not match this format are rejected and counted (114 records, 0.03%).
 
-`cache/train_clean`, `cache/val_clean`, `cache/val_lora`, and every checkpoint/result directory derived from them (`results_conv/`, `results_long30/`, `results_lrsweep/`, `results_seeds/`, `results_patience4/`, `results_loraeval/`, etc.) were built on incorrect labels and are retained only as historical records.
+`cache/train_clean`, `cache/val_clean`, `cache/val_lora`, and every checkpoint/result directory derived from them (`results_conv/`, `results_long30/`, `results_lrsweep/`, `results_seeds/`, `results_patience4/`, `results_loraeval/`, etc.) were built on incorrect labels and are retained only as historical records. Those result directories now live under `archive/` (e.g. `archive/results_lrsweep/`); the historical commands below keep the paths they were run with.
 
 ### Path Conventions
 

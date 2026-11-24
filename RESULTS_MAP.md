@@ -5,7 +5,7 @@ overwritten because several of them exist precisely to show that an earlier
 conclusion did not hold.
 
 **Read `results_final/` and `results_ablations/`.** They are the only results
-computed on correctly parsed data. Everything else predates the parser fix in
+computed on correctly parsed data. Everything else (now under `archive/`) predates the parser fix in
 `dataset.py`, which had split multi-line Math-Shepherd steps into extra steps
 labelled as errors (13.5% of error labels spurious, 17% of fully correct
 trajectories marked as containing an error). Those directories are kept as a
@@ -32,22 +32,25 @@ have to be re-run.
 ## Before the parser fix -- superseded, kept for the record
 
 In order of the study's history. Each was a valid step at the time; none of
-their numbers should be quoted.
+their numbers should be quoted. These directories live under `archive/`
+(moved there with `git mv` in 2026-11, so `git log --follow` keeps their
+history); commands in `TRAINING_WORKFLOW.md` that produced them still name
+their original paths.
 
 | Directory | What it was |
 |---|---|
-| `results/` | The original protocol: `lr=1e-3`, 10 epochs. Its architecture ranking (cnn best) turned out to be an artefact of the untuned learning rate. Also holds the first in-distribution control (on `cache/val_2048`, checkpoints not recorded). |
-| `results_attnpe/` | First `attention_pe` arm, `lr=1e-3` only. |
-| `results_single_mean/`, `results_single_last/` | Single-solution evaluation under the `mean` and `last` aggregations. |
-| `results_lrsweep/` | The 6 heads x {1e-3, 3e-4, 1e-4} grid. **This is where the lr=1e-3 conclusions broke**: 1e-3 was the worst value for every head. |
-| `results_best/` | Six heads at their best lr from the grid, 10 epochs. |
-| `results_long/` | `attention @ 1e-4` for 30 epochs: the 10-epoch budget had truncated it. |
-| `results_long30/`, `results_conv/` | Six heads at `lr=1e-4`, 30 epochs, and their full evaluation -- the protocol `results_final/` repeats on corrected data. |
-| `results_patience4/`, `results_p4_eval/` | Patience check, at the superseded `lr=1e-3`. |
-| `results_seeds/`, `results_seedeval/` | Seed check with a 10-epoch cap. |
-| `results_val2048/` | Truncation check at 2048 tokens. |
-| `results_sub10/` | Frozen heads on a 10% subset, for a scaled-down LoRA comparison later replaced by the full one. |
-| `results_lora_full/`, `results_loraeval/` | LoRA on the full 440k for one epoch, and its comparison with the frozen encoder. `train_lora.py` reads labels through `dataset.py`, so this arm used the faulty parser too. |
+| `archive/results/` | The original protocol: `lr=1e-3`, 10 epochs. Its architecture ranking (cnn best) turned out to be an artefact of the untuned learning rate. Also holds the first in-distribution control (on `cache/val_2048`, checkpoints not recorded). |
+| `archive/results_attnpe/` | First `attention_pe` arm, `lr=1e-3` only. |
+| `archive/results_single_mean/`, `archive/results_single_last/` | Single-solution evaluation under the `mean` and `last` aggregations. |
+| `archive/results_lrsweep/` | The 6 heads x {1e-3, 3e-4, 1e-4} grid. **This is where the lr=1e-3 conclusions broke**: 1e-3 was the worst value for every head. |
+| `archive/results_best/` | Six heads at their best lr from the grid, 10 epochs. |
+| `archive/results_long/` | `attention @ 1e-4` for 30 epochs: the 10-epoch budget had truncated it. |
+| `archive/results_long30/`, `archive/results_conv/` | Six heads at `lr=1e-4`, 30 epochs, and their full evaluation -- the protocol `results_final/` repeats on corrected data. |
+| `archive/results_patience4/`, `archive/results_p4_eval/` | Patience check, at the superseded `lr=1e-3`. |
+| `archive/results_seeds/`, `archive/results_seedeval/` | Seed check with a 10-epoch cap. |
+| `archive/results_val2048/` | Truncation check at 2048 tokens. |
+| `archive/results_sub10/` | Frozen heads on a 10% subset, for a scaled-down LoRA comparison later replaced by the full one. |
+| `archive/results_lora_full/`, `archive/results_loraeval/` | LoRA on the full 440k for one epoch, and its comparison with the frozen encoder. `train_lora.py` reads labels through `dataset.py`, so this arm used the faulty parser too. |
 
 ## Conventions shared by every directory
 

@@ -209,7 +209,7 @@ label text is not exactly its input with markers replaced is rejected (114 of
 440,208 training and 2 of 4,447 validation records).
 
 Every cache, checkpoint and result directory built before the fix is kept only
-as a record (`RESULTS_MAP.md`). Two conclusions changed materially: the LoRA arm
+as a record, under `archive/` (`RESULTS_MAP.md`). Two conclusions changed materially: the LoRA arm
 had shown no gain from unfreezing (it now shows the largest effect in the
 study), and `cnn` had fallen below `linear` under causal scoring (it no longer
 does). The study's earlier history -- a protocol that fixed `lr=1e-3`, which the
