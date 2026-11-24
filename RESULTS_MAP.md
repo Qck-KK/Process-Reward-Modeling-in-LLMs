@@ -27,6 +27,10 @@ relabel`). The head-based rows of every `bon_results.*` (here, in
 single-solution metrics (`*_single_metrics.json`), still use the old labels and
 have to be re-run.
 
+`results_ablations/bon_holm_frozen_plus_lora.csv` (2026-11) re-applies Holm to
+the frozen and LoRA Best-of-N selectors as one family, from the committed
+`bon_results.csv` files (so with the pre-correction labels and 2,000 resamples).
+
 `run_experiments.py` regenerates all three from the caches.
 
 ## Before the parser fix -- superseded, kept for the record

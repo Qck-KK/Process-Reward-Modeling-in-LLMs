@@ -137,6 +137,16 @@ significant after Holm correction across its six selectors:
 | weighted vote, mean | 0.4867 | +0.021 [+0.008, +0.034] |
 | highest score, last | 0.4594 | −0.006 [−0.029, +0.017], n.s. |
 
+Those corrections are within the LoRA run's six selectors. Treating the
+frozen and LoRA selectors at N=16 as one family of 42
+(`python -m analysis.holm_bon_family`, written to
+`results_ablations/bon_holm_frozen_plus_lora.csv`, from the committed `bon_results.csv`
+files, i.e. the pre-correction labels and 2,000 resamples), none of the LoRA
+weighted votes stays significant: Holm-adjusted p = 0.057 (mean), 0.068 (last)
+and 0.105 (min). Which family is appropriate depends on the claim; the
+cross-arm claim ("only LoRA beats majority voting") is a statement about the
+combined family. Both families need re-running on the re-graded labels.
+
 The gain is small and the arm is not compute-matched, but the direction is
 clear: better step metrics on frozen features did not buy Best-of-N, while
 adapting the encoder did. What limits a frozen-encoder PRM here is the frozen
@@ -353,6 +363,8 @@ Analysis (`analysis/`):
   caches or checkpoints (LoRA vs frozen, and the loss / zeta / lr / seed ablations)
 - `holm_correction.py` — Holm-Bonferroni correction over those pairwise
   comparisons, within a chosen family
+- `holm_bon_family.py` — Holm across the Best-of-N selectors of several runs
+  (e.g. frozen + LoRA) as one family
 
 Run evaluation and analysis as modules from the repository root, for example
 `python -m eval.eval_step_metrics ...`.

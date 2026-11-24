@@ -12,6 +12,7 @@ from analysis.analyze_offline_pruning import (
     classify_trajectory,
     stopping_index,
 )
+from analysis.holm_bon_family import pool_runs
 from analysis.holm_correction import (
     bootstrap_p_value,
     correct_pairwise_rows,
@@ -331,6 +332,33 @@ class BootstrapSampleTests(unittest.TestCase):
         self.assertAlmostEqual(floor_2k, 2 / 2001)
         self.assertGreater(holm_adjust([floor_2k] * 72)[0], 0.05)
         self.assertLess(holm_adjust([floor_20k] * 72)[0], 0.05)
+
+
+class CombinedFamilyTests(unittest.TestCase):
+    @staticmethod
+    def row(head, method, p, diff=0.02, k=16, accuracy=0.5):
+        return {"head": head, "agg": "-" if method == "reference" else "mean", "method": method,
+                "k": str(k), "accuracy": str(accuracy), "diff_vs_majority": str(diff),
+                "diff_vs_majority_ci_low": "0", "diff_vs_majority_ci_high": "0",
+                "p_vs_majority": str(p), "p_holm_vs_majority": str(p)}
+
+    def test_union_family_is_larger_and_checks_pairing(self):
+        majority = self.row("majority_vote", "reference", "nan", 0.0)
+        frozen = [majority] + [self.row("h{0}".format(i), "argmax", 0.5, -0.01) for i in range(9)]
+        lora = [majority, self.row("linear", "weighted_vote", 0.0048)]
+        within = pool_runs([("lora", lora)])
+        self.assertTrue(within[0]["better_than_majority_combined"])
+        pooled = pool_runs([("frozen", frozen), ("lora", lora)])
+        self.assertEqual(len(pooled), 10)
+        linear = [r for r in pooled if r["run"] == "lora"][0]
+        self.assertAlmostEqual(linear["p_holm_combined"], 0.048)
+        self.assertTrue(linear["better_than_majority_combined"])
+        pooled = pool_runs([("frozen", frozen), ("lora", lora + [self.row("x", "argmax", 0.3)])])
+        self.assertFalse([r for r in pooled if r["head"] == "linear"][0]
+                         ["better_than_majority_combined"])
+        other = [self.row("majority_vote", "reference", "nan", 0.0, accuracy=0.4)]
+        with self.assertRaises(ValueError):
+            pool_runs([("frozen", frozen), ("other", other)])
 
 
 class BestOfNTests(unittest.TestCase):

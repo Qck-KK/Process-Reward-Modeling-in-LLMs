@@ -248,9 +248,15 @@ def lora_eval_steps():
             + arm("frozen_attention", "attention", final("attention")))
     bon_lora = bon(LORA_CKPT, ["linear"], os.path.join(ABL_OUT, "bon_lora"))
     bon_lora[bon_lora.index("--cache_dir") + 1] = BON_LORA_CACHE
+    # The cross-arm claim (frozen vs LoRA against majority voting) is tested
+    # over the union of both runs' selectors.
+    bon_family = [PY, "-m", "analysis.holm_bon_family",
+                  "--run", "frozen:" + os.path.join(FINAL_OUT, "bon_results.csv"),
+                  "--run", "lora:" + os.path.join(ABL_OUT, "bon_lora", "bon_results.csv"),
+                  "--out", os.path.join(ABL_OUT, "bon_holm_frozen_plus_lora.csv")]
     return [compare("lora_vs_frozen", arms),
             holm(os.path.join(ABL_OUT, "lora_vs_frozen_pairwise.csv"), "all"),
-            bon_lora]
+            bon_lora, bon_family]
 
 
 ROBUST_OUT = "results_final_lr3e-5"
