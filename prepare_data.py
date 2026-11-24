@@ -1,4 +1,7 @@
+"""Build the data files: Math-Shepherd split, GSM8K Best-of-N candidates and their grading.
 
+Subcommands: split, generate, convert.
+"""
 
 import argparse
 import json

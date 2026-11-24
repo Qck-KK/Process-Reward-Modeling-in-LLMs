@@ -11,6 +11,7 @@ from transformers import AutoModel, AutoTokenizer
 from peft import LoraConfig, get_peft_model
 
 from dataset import MathShepherdStepDataset, collate_fn
+from eval.eval_utils import get_device
 from pqm_loss import pqm_loss
 
 
@@ -88,8 +89,12 @@ def main():
     parser.add_argument("--log_every", type=int, default=200)
     parser.add_argument("--save_dir", required=True)
     parser.add_argument("--results_dir", required=True)
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--device", default=None,
+                        help="Default: CUDA, then MPS, then CPU. fp16 autocast and loss "
+                             "scaling are used on CUDA only.")
     args = parser.parse_args()
+    args.device = get_device(args.device)
+    use_amp = args.device == "cuda"
 
     torch.manual_seed(args.seed)
     os.makedirs(args.save_dir, exist_ok=True)
@@ -115,7 +120,7 @@ def main():
     optimizer = torch.optim.AdamW(
         list(model.parameters()) + list(head.parameters()), lr=args.lr
     )
-    scaler = torch.amp.GradScaler(args.device)
+    scaler = torch.amp.GradScaler(args.device, enabled=use_amp)
 
     history = {"epoch": [], "train_loss": [], "step": [], "step_loss": []}
     if args.device == "cuda":
@@ -130,7 +135,7 @@ def main():
             input_ids = batch["input_ids"].to(args.device)
             attention_mask = batch["attention_mask"].to(args.device)
             labels = batch["labels"].to(args.device)
-            with torch.amp.autocast(args.device, dtype=torch.float16):
+            with torch.amp.autocast(args.device, dtype=torch.float16, enabled=use_amp):
                 hidden = model(input_ids=input_ids,
                                attention_mask=attention_mask).last_hidden_state
                 step_hidden, step_mask = gather_step_states(

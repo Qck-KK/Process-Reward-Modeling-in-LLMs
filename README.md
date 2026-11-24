@@ -246,7 +246,10 @@ Math-Shepherd trajectories and 4 GSM8K questions it encodes with Qwen2.5-0.5B
 (downloaded on first use, about 1 GB), trains all six heads and a BCE variant,
 runs every evaluation and statistical script, Best-of-N, and a small LoRA pass.
 It takes about 2.5 minutes on an RTX 4060; `--no_lora` skips the stage that
-needs `peft`. Its numbers are meaningless by design.
+needs `peft`. Its numbers are meaningless by design. Without network access or
+a GPU, `python tests/make_tiny_encoder.py runs/tiny_encoder` builds a tiny
+random-weight Qwen2 encoder and tokenizer and `python smoke_test.py --model_name
+runs/tiny_encoder` runs all stages on it on CPU in under two minutes.
 
 To reproduce the reported experiments:
 

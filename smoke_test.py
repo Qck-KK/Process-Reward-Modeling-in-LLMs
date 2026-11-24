@@ -17,7 +17,11 @@ def main():
     parser.add_argument("--out", default=os.path.join("runs", "smoke"))
     parser.add_argument("--bon_questions", type=int, default=4)
     parser.add_argument("--no_lora", action="store_true")
+    parser.add_argument("--model_name", default="Qwen/Qwen2.5-0.5B",
+                        help="Encoder for every encoding stage; a local directory with a "
+                             "small model and tokenizer lets the smoke test run offline.")
     args = parser.parse_args()
+    model = ["--model_name", args.model_name]
 
     out = args.out
     if os.path.exists(out):
@@ -50,13 +54,13 @@ def main():
          [PY, "prepare_data.py", "convert", "--source", bon_source, "--out", single]),
         ("encode: training set",
          [PY, "precompute_embeddings.py", "--train_file", os.path.join(data, "train.jsonl"),
-          "--cache_dir", train_cache, "--batch_size", "8"]),
+          "--cache_dir", train_cache, "--batch_size", "8", *model]),
         ("encode: validation set",
          [PY, "precompute_embeddings.py", "--train_file", os.path.join(data, "val.jsonl"),
-          "--cache_dir", val_cache, "--batch_size", "8"]),
+          "--cache_dir", val_cache, "--batch_size", "8", *model]),
         ("encode: Best-of-N candidates",
          [PY, "precompute_eval_embeddings.py", "--eval_file", single,
-          "--cache_dir", bon_cache, "--batch_size", "8"]),
+          "--cache_dir", bon_cache, "--batch_size", "8", *model]),
         ("audit: labels and baselines",
          [PY, "-m", "analysis.analyze_data_bias", "--cache_dir", val_cache,
           "--results_dir", res, *split]),
@@ -126,11 +130,11 @@ def main():
             ("LoRA: train adapters on 16 trajectories",
              [PY, "train_lora.py", "--train_file", os.path.join(data, "train.jsonl"),
               "--epochs", "1", "--max_records", "16", "--batch_size", "4",
-              "--log_every", "2", "--save_dir", lora, "--results_dir", os.path.join(res, "lora")]),
+              "--log_every", "2", "--save_dir", lora, "--results_dir", os.path.join(res, "lora"), *model]),
             ("LoRA: re-encode validation set",
              [PY, "precompute_embeddings.py", "--train_file", os.path.join(data, "val.jsonl"),
               "--cache_dir", os.path.join(cache, "val_lora"), "--batch_size", "8",
-              "--lora_path", os.path.join(lora, "adapter")]),
+              "--lora_path", os.path.join(lora, "adapter"), *model]),
             ("LoRA: compare with the frozen encoder",
              [PY, "-m", "analysis.compare_lora_frozen",
               "--arm", "lora_linear:{0}:linear:{1}".format(
