@@ -148,7 +148,7 @@ frozen and LoRA selectors at N=16 as one family of 42
 `results_ablations/bon_holm_frozen_plus_lora.csv`, from the committed `bon_results.csv`
 files, i.e. the pre-correction labels and 2,000 resamples), none of the LoRA
 weighted votes stays significant: Holm-adjusted p = 0.057 (mean), 0.068 (last)
-and 0.105 (min). Which family is appropriate depends on the claim; the
+and 0.105 (min); at N=8 all three remain significant (0.042). Which family is appropriate depends on the claim; the
 cross-arm claim ("only LoRA beats majority voting") is a statement about the
 combined family. Both families need re-running on the re-graded labels.
 
