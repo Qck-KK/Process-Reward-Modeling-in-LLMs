@@ -434,7 +434,7 @@ unrecorded shuffle, so `split` yields the same sizes but different validation
 rows. Everything downstream is deterministic.
 
 `TRAINING_WORKFLOW.md` is the step-by-step manual and `RESULTS_MAP.md` says
-which result directory answers which question. Of the 47 tests, several are
+which result directory answers which question. Of the 51 tests, several are
 invariants rather than unit tests -- pointwise heads must score prefixes and full
 trajectories identically, plain attention must be permutation equivariant, a
 multi-line final step must stay one step -- and each of those exists because the
