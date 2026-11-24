@@ -24,6 +24,7 @@ from eval.eval_utils import (
     best_threshold_accuracy,
     deterministic_example_split,
     roc_auc,
+    within_group_auc,
 )
 from cached_steps import CachedSteps
 from dataset import parse_math_shepherd
@@ -71,6 +72,17 @@ class MetricTests(unittest.TestCase):
         scores = torch.ones(5)
         self.assertAlmostEqual(roc_auc(scores, labels), 0.5)
         self.assertAlmostEqual(average_precision(scores, labels), 0.6, places=6)
+
+    def test_within_group_auc_ignores_between_group_ranking(self):
+        # Each question ranks its own candidates perfectly, but question 1's
+        # candidates all score above question 0's: pooled AUC < 1, within = 1.
+        scores = torch.tensor([0.1, 0.2, 0.9, 1.0, 5.0, 5.0])
+        labels = torch.tensor([0, 1, 0, 1, 1, 1])
+        groups = torch.tensor([0, 0, 1, 1, 2, 2])
+        self.assertLess(roc_auc(scores, labels), 1.0)
+        auc, n_groups = within_group_auc(scores, labels, groups)
+        self.assertEqual((auc, n_groups), (1.0, 2))   # group 2 has no negative
+        self.assertEqual(within_group_auc(scores, torch.ones(6, dtype=torch.long), groups)[1], 0)
 
     def test_threshold_search_can_predict_all_positive(self):
         scores = torch.ones(4)

@@ -132,6 +132,30 @@ def roc_auc(scores: torch.Tensor, labels: torch.Tensor) -> float:
     return auc.item()
 
 
+def within_group_auc(scores: torch.Tensor, labels: torch.Tensor, groups: torch.Tensor):
+    """Mean ROC-AUC computed separately inside each group (e.g. GSM8K question).
+
+    The pooled AUC also rewards ranking easy questions' candidates above hard
+    questions' candidates; reranking only ever compares candidates of one
+    question. Groups without both a correct and an incorrect candidate are
+    skipped. Returns (mean AUC, number of groups used).
+    """
+    values = []
+    for group in torch.unique(groups):
+        member = groups == group
+        auc = roc_auc(scores[member], labels[member])
+        if auc == auc:
+            values.append(auc)
+    if not values:
+        return float("nan"), 0
+    return sum(values) / len(values), len(values)
+
+
+def load_question_ids(eval_file: str) -> torch.Tensor:
+    with open(eval_file, encoding="utf-8") as f:
+        return torch.tensor([int(json.loads(line)["question_id"]) for line in f if line.strip()])
+
+
 def average_precision(scores: torch.Tensor, labels: torch.Tensor) -> float:
     scores = scores.detach().float().cpu()
     labels = labels.detach().long().cpu()

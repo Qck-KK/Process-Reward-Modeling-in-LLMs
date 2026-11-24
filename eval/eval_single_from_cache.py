@@ -16,9 +16,11 @@ from eval.eval_utils import (
     binary_accuracy,
     deterministic_example_split,
     get_device,
+    load_question_ids,
     override_labels,
     pairwise_separation,
     roc_auc,
+    within_group_auc,
 )
 from reward_heads import build_reward_head
 
@@ -92,6 +94,10 @@ def main():
     auc = roc_auc(test_scores, test_labels)
     ap = average_precision(test_scores, test_labels)
     sep = pairwise_separation(test_scores, test_labels)
+    within_auc, n_questions = float("nan"), 0
+    if args.eval_file:
+        question_ids = load_question_ids(args.eval_file)[test_mask]
+        within_auc, n_questions = within_group_auc(test_scores, test_labels.long(), question_ids)
 
     print(f"\n=== {args.head} (agg={args.agg}) ===")
     print(f"Calibration accuracy (threshold={thr:.3f}): {calibration_acc:.4f}")
@@ -99,6 +105,8 @@ def main():
     print(f"Held-out balanced accuracy: {balanced_acc:.4f}")
     print(f"Held-out ROC-AUC / AP: {auc:.4f} / {ap:.4f}")
     print(f"Pairwise separation P(score_correct > score_incorrect): {sep:.4f}")
+    if args.eval_file:
+        print(f"Within-question ROC-AUC (mean over {n_questions} questions): {within_auc:.4f}")
     print(f"n_test_solutions={len(test_scores)}  n_correct={int(test_labels.sum())}  "
           f"n_incorrect={int((test_labels == 0).sum())}")
 
@@ -115,6 +123,8 @@ def main():
             "single_eval_roc_auc": auc,
             "single_eval_average_precision": ap,
             "single_eval_separation": sep,
+            "single_eval_within_question_roc_auc": within_auc,
+            "single_eval_within_question_n_questions": n_questions,
             "calibration_fraction": args.calibration_fraction,
             "split_seed": args.split_seed,
             "n_solutions": int(test_mask.sum()),

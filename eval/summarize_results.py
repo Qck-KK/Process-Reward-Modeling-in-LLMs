@@ -59,7 +59,8 @@ def main():
         + ["final_train_loss", "final_eval_loss"]
         + bon_keys
         + ["single_eval_accuracy", "single_eval_balanced_accuracy", "single_eval_roc_auc",
-           "single_eval_average_precision", "single_eval_separation"]
+           "single_eval_average_precision", "single_eval_separation",
+           "single_eval_within_question_roc_auc"]
         + ["step_reward_accuracy", "step_balanced_accuracy", "step_roc_auc",
            "step_average_precision", "qvalue_ranking_accuracy"]
         + ["first_error_boundary_drop", "matched_correct_boundary_drop",
@@ -101,6 +102,8 @@ def main():
             "single_eval_roc_auc": single.get("single_eval_roc_auc", ""),
             "single_eval_average_precision": single.get("single_eval_average_precision", ""),
             "single_eval_separation": single.get("single_eval_separation", ""),
+            "single_eval_within_question_roc_auc": single.get(
+                "single_eval_within_question_roc_auc", ""),
             "first_error_boundary_drop": behavior.get("first_error_boundary_drop", ""),
             "matched_correct_boundary_drop": behavior.get("matched_correct_boundary_drop", ""),
             "position_controlled_boundary_effect": behavior.get("position_controlled_boundary_effect", ""),

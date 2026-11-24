@@ -92,6 +92,11 @@ GSM8K candidates every head drops to 0.63-0.72, with `linear` the best at both
 learning rates -- the representation's step-correctness signal does not
 survive the change of generator and task.
 
+(Both AUCs pool candidates across questions. `eval_single_from_cache
+--eval_file` now also reports a within-question ROC-AUC -- the mean of per-question
+AUCs, the ranking that Best-of-N actually uses -- which has not been computed
+for the reported heads; it needs the candidate cache and checkpoints.)
+
 **No frozen head beats majority voting at Best-of-N.** Reranking 16
 candidates per GSM8K test question sampled from Qwen2.5-0.5B-Instruct
 (temperature 0.7, top-p 0.95; 1,319 questions):
