@@ -165,7 +165,41 @@ leads causally, and that larger heads transfer worse to GSM8K. The margin `zeta`
 matters little: against the default 4, only `linear` at `zeta=2` (−0.004) and
 `attention` at `zeta=8` (−0.013) are significantly worse.
 
-### Causal heads (implemented, not yet run)
+## Figures
+
+All from `results_final/` (held-out half of the Math-Shepherd validation set,
+heads at `lr=1e-4`); none depends on the Best-of-N labels corrected above.
+
+**Label bias.** Error rate by relative step position and where the first error
+falls -- the reason for the position-only baseline.
+
+![Label position bias and first-error position](results_final/data_bias.png)
+
+**Scores around the first error.** Mean standardised Q-value at offsets from
+each trajectory's first error.
+
+![Reward behaviour around the first error](results_final/first_error_boundary.png)
+
+**Future-context sensitivity.** Mean absolute difference between full-trajectory
+and causal-prefix scores; zero for the pointwise heads by construction.
+
+![Future-context sensitivity](results_final/full_vs_causal_scores.png)
+
+**Perturbations.** Change in held-out ROC-AUC when steps are reversed, swapped,
+or masked.
+
+![Deterministic perturbation sensitivity](results_final/perturbation_sensitivity.png)
+
+**Offline pruning.** Safe step savings and error coverage against the
+false-prune rate on clean trajectories, for causal-prefix scores.
+
+![Pruning trade-off](results_final/pruning_tradeoff.png)
+
+Training curves are in `results_final/{head}_loss_curve.png`, stratified
+behaviour in `results_final/behavior_by_group.png` and detection delay in
+`results_final/pruning_detection_delay.png`.
+
+## Causal heads (implemented, not yet run)
 
 The causal-prefix numbers above take heads *trained* bidirectionally and only
 truncate their input at evaluation, which is not the like-for-like comparison
