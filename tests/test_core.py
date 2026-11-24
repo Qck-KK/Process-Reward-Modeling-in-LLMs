@@ -38,10 +38,13 @@ from eval.eval_bon import (
 )
 from pqm_loss import bce_step_loss, pqm_loss
 from reward_heads import (
+    CAUSAL_HEADS,
+    REPORTED_HEADS,
     AttentionPoolingHead,
     AttentionPoolingPositionHead,
     CNNHead,
     LinearHead,
+    build_reward_head,
 )
 
 
@@ -297,6 +300,71 @@ class ArchitectureTests(unittest.TestCase):
         plain = AttentionPoolingHead(hidden_size=32, n_heads=4)
         self.assertEqual(sum(p.numel() for p in head.parameters()),
                          sum(p.numel() for p in plain.parameters()))
+
+
+class CausalHeadTests(unittest.TestCase):
+    HIDDEN = 16
+
+    def build(self, name, seed=0):
+        torch.manual_seed(seed)
+        return build_reward_head(name, self.HIDDEN).eval()
+
+    def test_causal_variants_are_registered(self):
+        self.assertEqual(CAUSAL_HEADS, ["attention_causal", "attention_pe_causal",
+                                        "cnn_causal", "gru_causal"])
+        self.assertNotIn("gru_causal", REPORTED_HEADS)
+        self.assertFalse(self.build("gru_causal").gru.bidirectional)
+        self.assertTrue(self.build("gru").gru.bidirectional)
+
+    @torch.no_grad()
+    def test_output_at_t_ignores_later_steps(self):
+        """Perturbing steps > t must leave the score of every step <= t unchanged."""
+        generator = torch.Generator().manual_seed(1)
+        x = torch.randn(3, 7, self.HIDDEN, generator=generator)
+        mask = torch.ones(3, 7, dtype=torch.bool)
+        mask[1, 5:] = False
+        mask[2, 3:] = False
+        for name in CAUSAL_HEADS:
+            head = self.build(name)
+            base = head(x, mask)
+            for t in range(6):
+                perturbed = x.clone()
+                perturbed[:, t + 1:] = torch.randn(3, 7 - t - 1, self.HIDDEN, generator=generator) * 5
+                out = head(perturbed, mask)
+                valid = mask[:, :t + 1]
+                self.assertTrue(torch.allclose(out[:, :t + 1][valid], base[:, :t + 1][valid],
+                                               atol=1e-5), (name, t))
+
+    @torch.no_grad()
+    def test_bidirectional_heads_do_see_later_steps(self):
+        """Control: the reported contextual heads fail the same check."""
+        generator = torch.Generator().manual_seed(2)
+        x = torch.randn(2, 6, self.HIDDEN, generator=generator)
+        mask = torch.ones(2, 6, dtype=torch.bool)
+        for name in ("cnn", "gru", "attention", "attention_pe"):
+            head = self.build(name)
+            perturbed = x.clone()
+            perturbed[:, 3:] += 5
+            self.assertFalse(torch.allclose(head(perturbed, mask)[:, :3], head(x, mask)[:, :3],
+                                            atol=1e-5), name)
+
+    @torch.no_grad()
+    def test_causal_heads_score_prefixes_like_full_trajectories(self):
+        generator = torch.Generator().manual_seed(3)
+        x = torch.randn(4, 6, self.HIDDEN, generator=generator)
+        mask = torch.ones(4, 6, dtype=torch.bool)
+        mask[0, 4:] = False
+        mask[3, 1:] = False
+        for name in CAUSAL_HEADS:
+            head = self.build(name)
+            causal = causal_prefix_scores(head, x, mask)
+            self.assertTrue(torch.allclose(causal[mask], head(x, mask)[mask], atol=1e-5), name)
+
+    def test_causal_variants_keep_parameter_counts(self):
+        count = lambda name: sum(p.numel() for p in self.build(name).parameters())
+        for name in ("cnn", "attention", "attention_pe"):
+            self.assertEqual(count(name), count(name + "_causal"))
+        self.assertLess(count("gru_causal"), count("gru"))
 
 
 class StabilityTests(unittest.TestCase):

@@ -1,4 +1,5 @@
 
+import functools
 import math
 
 import torch
@@ -35,22 +36,37 @@ class MLPHead(nn.Module):
 
 
 class CNNHead(nn.Module):
-    def __init__(self, hidden_size: int, channels: int = 128, kernel_size: int = 3):
+    """Two 1-D convolutions over steps.
+
+    causal=False (the reported head): centred kernels, so step t sees steps
+    t+1 and t+2. causal=True: the sequence is left-padded by kernel_size-1, so
+    step t sees only steps <= t (the same parameter count).
+    """
+
+    def __init__(self, hidden_size: int, channels: int = 128, kernel_size: int = 3,
+                 causal: bool = False):
         super().__init__()
-        pad = kernel_size // 2
+        self.causal = causal
+        self.left_pad = kernel_size - 1 if causal else 0
+        pad = 0 if causal else kernel_size // 2
         self.conv1 = nn.Conv1d(hidden_size, channels, kernel_size, padding=pad)
         self.conv2 = nn.Conv1d(channels, channels, kernel_size, padding=pad)
         self.act = nn.GELU()
         self.out = nn.Linear(channels, 1)
+
+    def _conv(self, conv, x):
+        if self.left_pad:
+            x = nn.functional.pad(x, (self.left_pad, 0))
+        return conv(x)
 
     def forward(self, step_hidden, step_mask):
         # zero out padded steps before convolving so they don't pollute
         # neighboring real steps via the receptive field
         x = step_hidden * step_mask.unsqueeze(-1)
         x = x.transpose(1, 2)     # (B, H, S)
-        x = self.act(self.conv1(x))
+        x = self.act(self._conv(self.conv1, x))
         x = x * step_mask.unsqueeze(1)
-        x = self.act(self.conv2(x))
+        x = self.act(self._conv(self.conv2, x))
         x = x * step_mask.unsqueeze(1)
         x = x.transpose(1, 2)    # (B, S, channels)
         return self.out(x).squeeze(-1)
@@ -84,8 +100,16 @@ class GRUHead(nn.Module):
 
 
 class AttentionPoolingHead(nn.Module):
-    def __init__(self, hidden_size: int, n_heads: int = 4, dropout: float = 0.1):
+    """One self-attention block over steps.
+
+    causal=False (the reported head): every step attends to every step.
+    causal=True: step t attends only to steps <= t.
+    """
+
+    def __init__(self, hidden_size: int, n_heads: int = 4, dropout: float = 0.1,
+                 causal: bool = False):
         super().__init__()
+        self.causal = causal
         self.self_attn = nn.MultiheadAttention(
             embed_dim=hidden_size, num_heads=n_heads, dropout=dropout, batch_first=True
         )
@@ -105,9 +129,21 @@ class AttentionPoolingHead(nn.Module):
         if empty_rows.any():
             key_padding_mask = key_padding_mask.clone()
             key_padding_mask[empty_rows, 0] = False
-        attn_out, _ = self.self_attn(
-            step_hidden, step_hidden, step_hidden, key_padding_mask=key_padding_mask
-        )
+        if self.causal:
+            n_steps = step_hidden.shape[1]
+            # True = may NOT attend; padding sits at the end, so a valid step
+            # always keeps itself and its valid predecessors.
+            attn_mask = torch.ones(n_steps, n_steps, dtype=torch.bool,
+                                   device=step_hidden.device).triu(1)
+            attn_out, _ = self.self_attn(
+                step_hidden, step_hidden, step_hidden, key_padding_mask=key_padding_mask,
+                attn_mask=attn_mask, need_weights=False,
+            )
+        else:
+            # Unchanged call, so the reported checkpoints score bit-identically.
+            attn_out, _ = self.self_attn(
+                step_hidden, step_hidden, step_hidden, key_padding_mask=key_padding_mask
+            )
         x = self.norm1(step_hidden + attn_out)
         x = self.norm2(x + self.ffn(x))
         return self.out(x).squeeze(-1)
@@ -141,7 +177,18 @@ REWARD_HEADS = {
     "gru": GRUHead,
     "attention": AttentionPoolingHead,
     "attention_pe": AttentionPoolingPositionHead,
+    # Causal variants: step t is scored from steps <= t during training as well
+    # as evaluation, the like-for-like comparison for causal-prefix scoring.
+    "cnn_causal": functools.partial(CNNHead, causal=True),
+    "gru_causal": functools.partial(GRUHead, bidirectional=False),
+    "attention_causal": functools.partial(AttentionPoolingHead, causal=True),
+    "attention_pe_causal": functools.partial(AttentionPoolingPositionHead, causal=True),
 }
+
+# The six heads of the reported experiments, the default of every script that
+# loops over heads. Sorted, as the scripts' former default was.
+REPORTED_HEADS = sorted(["linear", "mlp", "cnn", "gru", "attention", "attention_pe"])
+CAUSAL_HEADS = sorted(name for name in REWARD_HEADS if name.endswith("_causal"))
 
 
 def build_reward_head(name: str, hidden_size: int, **kwargs) -> nn.Module:

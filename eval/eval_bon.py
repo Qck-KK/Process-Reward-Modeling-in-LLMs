@@ -10,6 +10,7 @@ import os
 import torch
 
 from eval.eval_utils import (
+    DEFAULT_HEADS,
     HEAD_CHOICES,
     aggregate_trajectory_scores,
     get_device,
@@ -198,7 +199,7 @@ def main():
     parser.add_argument("--checkpoint_dir", default=None,
                         help="Head checkpoints; required unless --references_only.")
     parser.add_argument("--checkpoint_pattern", default="{head}_head.pt")
-    parser.add_argument("--heads", nargs="+", default=list(HEAD_CHOICES))
+    parser.add_argument("--heads", nargs="+", default=list(DEFAULT_HEADS))
     parser.add_argument("--aggs", nargs="+", default=["min", "mean", "last"])
     parser.add_argument("--ks", nargs="+", type=int, default=[1, 2, 4, 8, 16])
     parser.add_argument("--subsets_per_question", type=int, default=20)

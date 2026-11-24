@@ -249,6 +249,41 @@ def lora_eval_steps():
 
 ROBUST_OUT = "results_final_lr3e-5"
 
+# Causal variants (opt-in, not part of the reported results): the contextual
+# heads trained with access to steps <= t only, against the bidirectional heads
+# scored on prefixes. Same protocol as the main heads (lr 1e-4, 30 epochs,
+# patience 5).
+CAUSAL_CKPT = "checkpoints/causal"
+CAUSAL_OUT = "results_causal"
+CAUSAL_PAIRS = [("cnn", "cnn_causal"), ("gru", "gru_causal"),
+                ("attention", "attention_causal"), ("attention_pe", "attention_pe_causal")]
+
+
+def causal_training_steps():
+    return [train_step(head, "{0}/{1}_head.pt".format(CAUSAL_CKPT, head),
+                       os.path.join(CAUSAL_OUT, "train"))
+            for _, head in CAUSAL_PAIRS]
+
+
+def causal_eval_steps():
+    arms, prefix_arms = [], []
+    for base, causal in CAUSAL_PAIRS:
+        # Names share the base before the last "_", so --family prefix keeps
+        # exactly the four like-for-like comparisons.
+        arms += arm(base + "_prefix", base, final(base))
+        prefix_arms.append(base + "_prefix")
+        arms += arm(base + "_causal", causal, "{0}/{1}_head.pt".format(CAUSAL_CKPT, causal))
+    for head in ("linear", "mlp"):
+        arms += arm(head + "_pointwise", head, final(head))
+    compare_cmd = [PY, "-m", "analysis.compare_lora_frozen", *arms,
+                   "--prefix_arms", *prefix_arms, "--results_dir", CAUSAL_OUT,
+                   "--out_name", "causal_vs_prefix", "--bootstrap_samples", "2000", *SPLIT]
+    steps = [compare_cmd,
+             holm(os.path.join(CAUSAL_OUT, "causal_vs_prefix_pairwise.csv"), "prefix")]
+    causal_heads = [causal for _, causal in CAUSAL_PAIRS]
+    steps.append(bon(CAUSAL_CKPT, causal_heads, os.path.join(CAUSAL_OUT, "bon")))
+    return steps
+
 
 def copy_training_logs(lr, out):
     os.makedirs(out, exist_ok=True)
@@ -260,12 +295,16 @@ def copy_training_logs(lr, out):
 
 GROUPS = ["main", "main_eval", "bce", "zeta", "seeds", "lr", "ablation_eval",
           "long", "long_eval", "main_eval_lr3e-5", "lora", "lora_eval"]
+# Not run by default: experiments added after the reported results.
+OPTIONAL_GROUPS = ["causal", "causal_eval"]
 
 
 def main():
     global OTHER_LRS, ENCODER_PY
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", nargs="+", choices=GROUPS, default=GROUPS)
+    parser.add_argument("--only", nargs="+", choices=GROUPS + OPTIONAL_GROUPS, default=GROUPS,
+                        help="Default: every reported group. Optional groups ({0}) "
+                             "run only when named.".format(", ".join(OPTIONAL_GROUPS)))
     parser.add_argument("--lrs", nargs="+", default=OTHER_LRS,
                         help="Subset of the lr group, e.g. to split it across parallel workers.")
     parser.add_argument("--encoder_python", default=sys.executable,
@@ -293,6 +332,10 @@ def main():
         steps += lora_steps()
     if "lora_eval" in args.only:
         steps += [(cmd, []) for cmd in lora_eval_steps()]
+    if "causal" in args.only:
+        steps += causal_training_steps()
+    if "causal_eval" in args.only:
+        steps += [(cmd, []) for cmd in causal_eval_steps()]
 
     for index, (cmd, done) in enumerate(steps, 1):
         label = "[{0}/{1}]".format(index, len(steps))

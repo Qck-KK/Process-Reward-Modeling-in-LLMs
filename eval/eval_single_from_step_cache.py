@@ -9,6 +9,7 @@ import os
 import torch
 
 from eval.eval_utils import (
+    DEFAULT_HEADS,
     HEAD_CHOICES,
     aggregate_trajectory_scores,
     average_precision,
@@ -59,7 +60,7 @@ def main():
                              "lost to truncation.")
     parser.add_argument("--checkpoint_dir", required=True)
     parser.add_argument("--checkpoint_pattern", default="{head}_head.pt")
-    parser.add_argument("--heads", nargs="+", default=list(HEAD_CHOICES))
+    parser.add_argument("--heads", nargs="+", default=list(DEFAULT_HEADS))
     parser.add_argument("--aggs", nargs="+", default=["min", "mean", "last"])
     parser.add_argument("--results_dir", required=True)
     parser.add_argument("--bootstrap_samples", type=int, default=2000)

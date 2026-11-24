@@ -4,10 +4,13 @@ import os
 
 import torch
 
-from reward_heads import REWARD_HEADS
+from reward_heads import REPORTED_HEADS, REWARD_HEADS
 
 
 HEAD_CHOICES = sorted(REWARD_HEADS.keys())
+# Default of the scripts that loop over heads: the six reported heads only, so
+# the causal variants (which have no reported checkpoints) are opt-in.
+DEFAULT_HEADS = list(REPORTED_HEADS)
 
 
 def get_device(device=None):

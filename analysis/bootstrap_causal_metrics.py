@@ -8,6 +8,7 @@ import os
 import torch
 
 from eval.eval_utils import (
+    DEFAULT_HEADS,
     HEAD_CHOICES,
     average_precision,
     deterministic_example_split,
@@ -28,7 +29,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--results_dir", required=True,
                         help="Directory holding {head}_causal_predictions.pt")
-    parser.add_argument("--heads", nargs="+", default=list(HEAD_CHOICES))
+    parser.add_argument("--heads", nargs="+", default=list(DEFAULT_HEADS))
     parser.add_argument("--bootstrap_samples", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()

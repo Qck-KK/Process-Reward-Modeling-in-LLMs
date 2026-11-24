@@ -15,6 +15,7 @@ from eval.eval_utils import (
     roc_auc,
 )
 from reward_heads import build_reward_head
+from analysis.analyze_offline_pruning import causal_prefix_scores
 
 
 def pad_and_concat(tensors, value):
@@ -26,7 +27,7 @@ def pad_and_concat(tensors, value):
 
 
 @torch.no_grad()
-def score(cache_dir, head_name, checkpoint, device):
+def score(cache_dir, head_name, checkpoint, device, prefix=False):
     shard_paths = sorted(glob.glob(os.path.join(cache_dir, "shard_*.pt")))
     assert shard_paths, "No cached shards in " + cache_dir
     with open(os.path.join(cache_dir, "hidden_size.txt")) as f:
@@ -39,7 +40,10 @@ def score(cache_dir, head_name, checkpoint, device):
         shard = torch.load(path, map_location=device)
         step_hidden = shard["step_hidden"].to(device).float()
         step_mask = shard["step_mask"].to(device).bool()
-        out.append(head(step_hidden, step_mask).cpu())
+        if prefix:
+            out.append(causal_prefix_scores(head, step_hidden, step_mask).cpu())
+        else:
+            out.append(head(step_hidden, step_mask).cpu())
         labels.append(shard["labels"].long().cpu())
         masks.append(step_mask.cpu())
     return (pad_and_concat(out, 0.0), pad_and_concat(labels, -100),
@@ -63,6 +67,11 @@ def main():
     parser.add_argument("--results_dir", required=True)
     parser.add_argument("--out_name", default="lora_vs_frozen",
                         help="Output file stem; any set of arms can be compared, not only LoRA.")
+    parser.add_argument("--prefix_arms", nargs="*", default=[], metavar="NAME",
+                        help="Arms scored causally: step t from steps <= t only, as in "
+                             "analysis.analyze_offline_pruning. Used to compare a "
+                             "bidirectional head under prefix scoring with a head "
+                             "trained causally.")
     parser.add_argument("--bootstrap_samples", type=int, default=2000)
     parser.add_argument("--calibration_fraction", type=float, default=0.5)
     parser.add_argument("--split_seed", type=int, default=42)
@@ -77,7 +86,8 @@ def main():
     reference_labels = None
     for spec in args.arm:
         name, cache_dir, head_name, checkpoint = spec.split(":", 3)
-        scores, labels, step_mask = score(cache_dir, head_name, checkpoint, device)
+        scores, labels, step_mask = score(cache_dir, head_name, checkpoint, device,
+                                          prefix=name in args.prefix_arms)
         # Every arm must cover the same trajectories, or the pairing is invalid.
         if reference_labels is None:
             reference_labels = labels
@@ -129,7 +139,7 @@ def main():
     summary = {"n_test_trajectories": int(n_test),
                "bootstrap_samples": args.bootstrap_samples,
                "seed": args.seed, "split_seed": args.split_seed,
-               "arm_specs": args.arm, "arms": {}}
+               "arm_specs": args.arm, "prefix_arms": args.prefix_arms, "arms": {}}
     for name in arms:
         entry = dict(point[name])
         for metric in ("roc_auc", "average_precision"):

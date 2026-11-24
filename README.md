@@ -165,6 +165,36 @@ leads causally, and that larger heads transfer worse to GSM8K. The margin `zeta`
 matters little: against the default 4, only `linear` at `zeta=2` (−0.004) and
 `attention` at `zeta=8` (−0.013) are significantly worse.
 
+### Causal heads (implemented, not yet run)
+
+The causal-prefix numbers above take heads *trained* bidirectionally and only
+truncate their input at evaluation, which is not the like-for-like comparison
+for an online setting: a head that will only ever see steps <= t could have
+been trained that way. `reward_heads.py` now has causal variants of every
+contextual head, selected by name with `--head` in every script:
+
+| head | change | parameters vs bidirectional |
+|---|---|---|
+| `gru_causal` | unidirectional GRU (`GRUHead(bidirectional=False)`) | fewer (one direction) |
+| `cnn_causal` | convolutions left-padded by `kernel_size-1` | same |
+| `attention_causal` | causal attention mask (step t attends to steps <= t) | same |
+| `attention_pe_causal` | the same with sinusoidal positions | same |
+
+The test suite checks that perturbing steps > t leaves every causal head's
+output at steps <= t unchanged, that the bidirectional heads fail that check,
+and that prefix scoring is a no-op for the causal heads. To train them under
+the main protocol (lr 1e-4, up to 30 epochs, patience 5) and compare each with
+its bidirectional counterpart under prefix scoring (paired bootstrap, Holm
+within the four pairs), then run Best-of-N:
+
+```bash
+python run_experiments.py --only causal causal_eval   # -> checkpoints/causal/, results_causal/
+```
+
+These groups are opt-in; a plain `python run_experiments.py` still runs only
+the reported experiments. No causal head has been trained yet, so there are no
+numbers for them.
+
 ## Data parsing and what it invalidated
 
 `dataset.py` originally split each Math-Shepherd solution on newlines and
@@ -254,7 +284,8 @@ Core pipeline:
   `--lora_path` exports from a LoRA-adapted encoder instead
 - `dataset.py` — Math-Shepherd parser and loader; `collate_fn` aligns labels to
   the step markers that survive tokenization
-- `reward_heads.py` — the six heads behind one interface
+- `reward_heads.py` — the six heads behind one interface, plus causal variants
+  (`*_causal`) of the four contextual ones
 - `pqm_loss.py` — PQM comparative ranking loss, plus the pointwise step-BCE
   baseline it is compared against
 - `train_from_cache.py` — trains a head from cached embeddings (`--loss pqm|bce`)

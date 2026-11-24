@@ -10,6 +10,7 @@ import os
 import torch
 
 from eval.eval_utils import (
+    DEFAULT_HEADS,
     HEAD_CHOICES,
     deterministic_example_split,
     get_device,
@@ -467,7 +468,7 @@ def main():
     parser.add_argument("--cache_dir", required=True)
     parser.add_argument("--checkpoint_dir", required=True)
     parser.add_argument("--results_dir", required=True)
-    parser.add_argument("--heads", nargs="+", choices=HEAD_CHOICES, default=HEAD_CHOICES)
+    parser.add_argument("--heads", nargs="+", choices=HEAD_CHOICES, default=DEFAULT_HEADS)
     parser.add_argument("--checkpoint_pattern", default="{head}_head.pt")
     parser.add_argument("--calibration_fraction", type=float, default=0.5)
     parser.add_argument("--split_seed", type=int, default=42)
