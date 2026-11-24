@@ -417,7 +417,9 @@ trajectories identically, plain attention must be permutation equivariant, a
 multi-line final step must stay one step -- and each of those exists because the
 corresponding bug had already corrupted a conclusion.
 
-The results were produced with two environments: caches and the LoRA arm with
+`requirements-cpu-test.txt` pins the CPU-only environment in which this
+repository's tests and offline smoke test were last run (2026-11); it is not
+the environment of the reported results. The results were produced with two environments: caches and the LoRA arm with
 torch 2.13 / transformers 5.13 / peft 0.21, heads and evaluation with torch 2.5.1.
 On unaffected records the encoder output matches the pre-fix caches to cosine
 similarity ≥ 0.99996 (fp16 rounding). Encoding the 440k training trajectories

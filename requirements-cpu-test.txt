@@ -1,0 +1,20 @@
+# CPU test environment: the exact versions this branch's unit tests and
+# `smoke_test.py --model_name <tiny encoder>` were run with (Python 3.12.3,
+# Linux x86_64, no GPU, 2026-11). It is NOT the environment of the reported
+# results -- see the comment in requirements.txt for what that used (torch
+# 2.13 / transformers 5.13 / peft 0.21 for encoding and LoRA, torch 2.5.1 for
+# heads and evaluation; their full pins were not recorded).
+#
+# torch was installed from PyPI (the 2.15.0+cu132 wheel, run on CPU). The CPU
+# wheel from https://download.pytorch.org/whl/cpu is smaller and is what the
+# CI workflow installs, but it was not the one tested here.
+torch==2.15.0
+numpy==2.5.5
+transformers==5.24.0
+tokenizers==0.23.3
+safetensors==0.8.0
+huggingface_hub==2.4.0
+peft==0.22.0
+datasets==5.2.0
+matplotlib==3.11.2
+# jupyter (for complete_training.ipynb) was not installed or tested.
