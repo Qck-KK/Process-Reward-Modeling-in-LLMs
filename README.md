@@ -362,6 +362,9 @@ python -m unittest discover -v
 python smoke_test.py
 ```
 
+The unit tests need only `torch` and `numpy` and run on CPU in seconds;
+`.github/workflows/tests.yml` runs them on every push and pull request.
+
 `smoke_test.py` checks that the whole pipeline runs: on the 150 bundled
 Math-Shepherd trajectories and 4 GSM8K questions it encodes with Qwen2.5-0.5B
 (downloaded on first use, about 1 GB), trains all six heads and a BCE variant,
@@ -411,7 +414,7 @@ unrecorded shuffle, so `split` yields the same sizes but different validation
 rows. Everything downstream is deterministic.
 
 `TRAINING_WORKFLOW.md` is the step-by-step manual and `RESULTS_MAP.md` says
-which result directory answers which question. Of the 29 tests, several are
+which result directory answers which question. Of the 47 tests, several are
 invariants rather than unit tests -- pointwise heads must score prefixes and full
 trajectories identically, plain attention must be permutation equivariant, a
 multi-line final step must stay one step -- and each of those exists because the
