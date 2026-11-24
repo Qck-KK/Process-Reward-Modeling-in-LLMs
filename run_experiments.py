@@ -31,6 +31,12 @@ LONG_HEADS = ["mlp", "attention_pe"]
 LONG_EPOCHS = "60"
 
 SPLIT = ["--calibration_fraction", "0.5", "--split_seed", "42"]
+# Resamples for every bootstrap CI and paired test. The reported results used
+# 2000, which floors bootstrap p-values at 2/2001 ~ 0.001: enough within the
+# 36-selector Best-of-N family, too coarse for larger Holm families. The
+# scripts now default to 20000; this driver keeps 2000 unless --bootstrap_samples
+# says otherwise, so a plain re-run reproduces the reported numbers.
+BOOTSTRAP = "2000"
 COMMON = ["--cache_dir", TRAIN_CACHE, "--val_cache_dir", VAL_CACHE,
           "--early_stopping_patience", "5", *SPLIT]
 PY = sys.executable
@@ -99,7 +105,7 @@ def bon(checkpoint_dir, heads, results_dir):
             "--source_file", BON_SOURCE,
             "--checkpoint_dir", checkpoint_dir, "--heads", *heads,
             "--aggs", "min", "mean", "last", "--ks", "1", "2", "4", "8", "16",
-            "--subsets_per_question", "20", "--bootstrap_samples", "2000",
+            "--subsets_per_question", "20", "--bootstrap_samples", BOOTSTRAP,
             "--results_dir", results_dir, "--seed", "42"]
 
 
@@ -133,19 +139,19 @@ def main_eval_steps(out=None, ckpt=None, pattern="{head}_head.pt"):
                   *SPLIT, "--seed", "42"])
     steps.append([PY, "-m", "analysis.bootstrap_step_metrics", "--cache_dir", VAL_CACHE,
                   "--checkpoint_dir", ckpt, *pat, "--results_dir", out, "--heads", *ALL_HEADS,
-                  "--bootstrap_samples", "2000", *SPLIT, "--seed", "42"])
+                  "--bootstrap_samples", BOOTSTRAP, *SPLIT, "--seed", "42"])
     steps.append([PY, "-m", "analysis.bootstrap_causal_metrics", "--results_dir", out,
-                  "--heads", *ALL_HEADS, "--bootstrap_samples", "2000", "--seed", "42"])
+                  "--heads", *ALL_HEADS, "--bootstrap_samples", BOOTSTRAP, "--seed", "42"])
     steps.append([PY, "-m", "analysis.holm_correction",
                   os.path.join(out, "step_metrics_ci_pairwise.csv"),
                   os.path.join(out, "causal_metrics_ci_pairwise.csv"),
-                  "--bootstrap_samples", "2000"])
+                  "--bootstrap_samples", BOOTSTRAP])
     steps.append(bon(ckpt, ALL_HEADS, out) + pat)
     steps.append([PY, "-m", "eval.eval_single_from_step_cache", "--cache_dir", VAL_CACHE,
                   "--source_file", "data/val.jsonl",
                   "--checkpoint_dir", ckpt, *pat, "--heads", *ALL_HEADS,
                   "--aggs", "min", "mean", "last", "--results_dir", out,
-                  "--bootstrap_samples", "2000", *SPLIT, "--seed", "42"])
+                  "--bootstrap_samples", BOOTSTRAP, *SPLIT, "--seed", "42"])
     steps.append([PY, "-m", "eval.summarize_results", "--results_dir", out,
                   "--out_csv", os.path.join(out, "summary.csv"),
                   "--out_md", os.path.join(out, "summary.md")])
@@ -154,7 +160,7 @@ def main_eval_steps(out=None, ckpt=None, pattern="{head}_head.pt"):
 
 def holm(pairwise_csv, family):
     return [PY, "-m", "analysis.holm_correction", pairwise_csv,
-            "--bootstrap_samples", "2000", "--family", family]
+            "--bootstrap_samples", BOOTSTRAP, "--family", family]
 
 
 def arm(name, head, checkpoint):
@@ -163,7 +169,7 @@ def arm(name, head, checkpoint):
 
 def compare(out_name, arms):
     return [PY, "-m", "analysis.compare_lora_frozen", *arms, "--results_dir", ABL_OUT,
-            "--out_name", out_name, "--bootstrap_samples", "2000", *SPLIT]
+            "--out_name", out_name, "--bootstrap_samples", BOOTSTRAP, *SPLIT]
 
 
 def ablation_eval_steps():
@@ -277,7 +283,7 @@ def causal_eval_steps():
         arms += arm(head + "_pointwise", head, final(head))
     compare_cmd = [PY, "-m", "analysis.compare_lora_frozen", *arms,
                    "--prefix_arms", *prefix_arms, "--results_dir", CAUSAL_OUT,
-                   "--out_name", "causal_vs_prefix", "--bootstrap_samples", "2000", *SPLIT]
+                   "--out_name", "causal_vs_prefix", "--bootstrap_samples", BOOTSTRAP, *SPLIT]
     steps = [compare_cmd,
              holm(os.path.join(CAUSAL_OUT, "causal_vs_prefix_pairwise.csv"), "prefix")]
     causal_heads = [causal for _, causal in CAUSAL_PAIRS]
@@ -300,7 +306,7 @@ OPTIONAL_GROUPS = ["causal", "causal_eval"]
 
 
 def main():
-    global OTHER_LRS, ENCODER_PY
+    global OTHER_LRS, ENCODER_PY, BOOTSTRAP
     parser = argparse.ArgumentParser()
     parser.add_argument("--only", nargs="+", choices=GROUPS + OPTIONAL_GROUPS, default=GROUPS,
                         help="Default: every reported group. Optional groups ({0}) "
@@ -309,9 +315,12 @@ def main():
                         help="Subset of the lr group, e.g. to split it across parallel workers.")
     parser.add_argument("--encoder_python", default=sys.executable,
                         help="Interpreter with transformers and peft, for the lora group.")
+    parser.add_argument("--bootstrap_samples", default=BOOTSTRAP,
+                        help="Resamples for all bootstrap steps (reported results: 2000).")
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
     OTHER_LRS = args.lrs
+    BOOTSTRAP = str(args.bootstrap_samples)
     ENCODER_PY = args.encoder_python
 
     steps = training_steps([g for g in ("main",) if g in args.only])

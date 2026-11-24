@@ -72,7 +72,10 @@ def main():
                              "analysis.analyze_offline_pruning. Used to compare a "
                              "bidirectional head under prefix scoring with a head "
                              "trained causally.")
-    parser.add_argument("--bootstrap_samples", type=int, default=2000)
+    parser.add_argument("--bootstrap_samples", type=int, default=20000,
+                        help="Resamples; p-values are floored at 2/(n+1), so a Holm family "
+                             "of m tests needs n well above 2m/alpha. The reported results "
+                             "used 2000.")
     parser.add_argument("--calibration_fraction", type=float, default=0.5)
     parser.add_argument("--split_seed", type=int, default=42)
     parser.add_argument("--seed", type=int, default=42)

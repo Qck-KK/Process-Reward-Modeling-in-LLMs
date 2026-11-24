@@ -203,7 +203,10 @@ def main():
     parser.add_argument("--aggs", nargs="+", default=["min", "mean", "last"])
     parser.add_argument("--ks", nargs="+", type=int, default=[1, 2, 4, 8, 16])
     parser.add_argument("--subsets_per_question", type=int, default=20)
-    parser.add_argument("--bootstrap_samples", type=int, default=2000)
+    parser.add_argument("--bootstrap_samples", type=int, default=20000,
+                        help="Resamples; p-values are floored at 2/(n+1), so a Holm family "
+                             "of m tests needs n well above 2m/alpha. The reported results "
+                             "used 2000.")
     parser.add_argument("--results_dir", required=True)
     parser.add_argument("--out_name", default="bon_results")
     parser.add_argument("--references_only", action="store_true",

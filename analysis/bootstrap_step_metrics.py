@@ -55,7 +55,10 @@ def main():
     parser.add_argument("--checkpoint_pattern", default="{head}_head.pt")
     parser.add_argument("--heads", nargs="+", default=list(DEFAULT_HEADS))
     parser.add_argument("--results_dir", required=True)
-    parser.add_argument("--bootstrap_samples", type=int, default=2000)
+    parser.add_argument("--bootstrap_samples", type=int, default=20000,
+                        help="Resamples; p-values are floored at 2/(n+1), so a Holm family "
+                             "of m tests needs n well above 2m/alpha. The reported results "
+                             "used 2000.")
     parser.add_argument("--calibration_fraction", type=float, default=0.5)
     parser.add_argument("--split_seed", type=int, default=42)
     parser.add_argument("--seed", type=int, default=42)

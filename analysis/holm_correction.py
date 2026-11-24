@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import json
 import os
 
 PROB_SUFFIX = "_prob_a_better"
@@ -67,12 +68,36 @@ def correct_pairwise_rows(rows, n_samples, alpha=0.05, family="all"):
     return out, metrics, len(members)
 
 
+def recorded_bootstrap_samples(pairwise_csv):
+    """bootstrap_samples recorded in the JSON next to a *_pairwise.csv, or None."""
+    stem = os.path.splitext(pairwise_csv)[0]
+    if stem.endswith("_pairwise"):
+        stem = stem[: -len("_pairwise")]
+    path = stem + ".json"
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f).get("bootstrap_samples")
+
+
+def resolve_bootstrap_samples(pairwise_csv, given):
+    recorded = recorded_bootstrap_samples(pairwise_csv)
+    if given is None and recorded is None:
+        raise SystemExit("{0}: no recorded bootstrap_samples; pass --bootstrap_samples".format(
+            pairwise_csv))
+    if given is not None and recorded is not None and int(given) != int(recorded):
+        raise SystemExit("{0} was written with {1} resamples, not {2}".format(
+            pairwise_csv, recorded, given))
+    return int(given if given is not None else recorded)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("pairwise_csv", nargs="+",
                         help="e.g. results_final/step_metrics_ci_pairwise.csv")
-    parser.add_argument("--bootstrap_samples", type=int, default=2000,
-                        help="must match the run that wrote the CSV")
+    parser.add_argument("--bootstrap_samples", type=int, default=None,
+                        help="Resamples of the run that wrote the CSV. Default: read from "
+                             "the JSON written next to it (X_pairwise.csv -> X.json).")
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--family", choices=FAMILIES, default="all")
     args = parser.parse_args()
@@ -83,8 +108,9 @@ def main():
         if not rows:
             print("[skip] " + path + " is empty")
             continue
+        n_samples = resolve_bootstrap_samples(path, args.bootstrap_samples)
         corrected, metrics, n_family = correct_pairwise_rows(
-            rows, args.bootstrap_samples, args.alpha, args.family)
+            rows, n_samples, args.alpha, args.family)
         out_path = os.path.splitext(path)[0] + "_holm.csv"
         with open(out_path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=list(corrected[0].keys()))

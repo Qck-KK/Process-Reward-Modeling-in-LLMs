@@ -12,7 +12,12 @@ from analysis.analyze_offline_pruning import (
     classify_trajectory,
     stopping_index,
 )
-from analysis.holm_correction import bootstrap_p_value, correct_pairwise_rows, holm_adjust
+from analysis.holm_correction import (
+    bootstrap_p_value,
+    correct_pairwise_rows,
+    holm_adjust,
+    resolve_bootstrap_samples,
+)
 from eval.eval_utils import (
     average_precision,
     best_threshold_accuracy,
@@ -302,6 +307,30 @@ class MultipleComparisonTests(unittest.TestCase):
         self.assertAlmostEqual(bootstrap_p_value(0.0, 2000), 2 / 2001)
         self.assertAlmostEqual(bootstrap_p_value(1.0, 2000), 2 / 2001)
         self.assertEqual(bootstrap_p_value(0.5, 2000), 1.0)
+
+
+class BootstrapSampleTests(unittest.TestCase):
+    def test_holm_reads_resamples_recorded_next_to_the_csv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            csv_path = os.path.join(directory, "lr_pairwise.csv")
+            open(csv_path, "w").close()
+            with self.assertRaises(SystemExit):
+                resolve_bootstrap_samples(csv_path, None)
+            self.assertEqual(resolve_bootstrap_samples(csv_path, 500), 500)
+            with open(os.path.join(directory, "lr.json"), "w") as f:
+                f.write('{"bootstrap_samples": 2000}')
+            self.assertEqual(resolve_bootstrap_samples(csv_path, None), 2000)
+            self.assertEqual(resolve_bootstrap_samples(csv_path, 2000), 2000)
+            with self.assertRaises(SystemExit):
+                resolve_bootstrap_samples(csv_path, 20000)
+
+    def test_p_value_floor_depends_on_resamples(self):
+        """Why 2000 resamples are too few for large Holm families."""
+        floor_2k = bootstrap_p_value(1.0, 2000, 0.0)
+        floor_20k = bootstrap_p_value(1.0, 20000, 0.0)
+        self.assertAlmostEqual(floor_2k, 2 / 2001)
+        self.assertGreater(holm_adjust([floor_2k] * 72)[0], 0.05)
+        self.assertLess(holm_adjust([floor_20k] * 72)[0], 0.05)
 
 
 class BestOfNTests(unittest.TestCase):

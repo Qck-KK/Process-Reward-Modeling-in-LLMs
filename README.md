@@ -18,7 +18,10 @@ Held-out metrics use 2,223 validation trajectories that play no part in training
 early stopping or threshold selection; intervals are 95% trajectory-level (or,
 for Best-of-N, question-level) paired bootstrap intervals over 2,000 resamples,
 and "significant" means significant after Holm correction within the relevant
-family of comparisons.
+family of comparisons. (2,000 resamples floor a bootstrap p-value at 2/2,001,
+about 0.001, which is coarse for large Holm families; the bootstrap scripts now
+default to 20,000, while `run_experiments.py` keeps 2,000 unless given
+`--bootstrap_samples`, so that it reproduces the numbers below.)
 
 > **Correction pending (2026-11, answer grading).** The Best-of-N candidates
 > were graded with an answer parser that cut gold answers at the thousands
