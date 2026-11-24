@@ -1,10 +1,11 @@
 """Build the data files: Math-Shepherd split, GSM8K Best-of-N candidates and their grading.
 
-Subcommands: split, generate, gold, relabel, convert.
+Subcommands: split, overlap, generate, gold, relabel, convert.
 """
 
 import argparse
 import decimal
+import hashlib
 import json
 import os
 import re
@@ -14,17 +15,76 @@ GSM8K_SYSTEM_PROMPT = ("You are a helpful mathematical reasoning assistant. Plea
                        "final answer.")
 
 
+def normalize_question(text):
+    """Question text up to case and whitespace, the key that groups trajectories."""
+    return " ".join(text.lower().split())
+
+
+def question_of(row):
+    """The question of a raw Math-Shepherd row (text before 'Step 1:')."""
+    text = row.get("question")
+    if text is None:
+        text = row.get("input", "")
+        at = text.find("Step 1:")
+        text = text[:at] if at >= 0 else text
+    return normalize_question(text)
+
+
+def question_in_validation(question, val_fraction, seed):
+    """Deterministic, order-independent assignment of a question to validation."""
+    digest = hashlib.sha256("{0}:{1}".format(seed, question).encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") / 2.0 ** 64 < val_fraction
+
+
+def grouped_split(rows, val_fraction, seed):
+    """Split row indices so every question lands entirely in train or in validation."""
+    train, val = [], []
+    for index, row in enumerate(rows):
+        (val if question_in_validation(question_of(row), val_fraction, seed) else train).append(index)
+    return train, val
+
+
+def question_overlap(train_rows, val_rows):
+    """Shared questions, and the fraction of validation rows whose question is in train."""
+    train_questions = {question_of(row) for row in train_rows}
+    val_questions = [question_of(row) for row in val_rows]
+    shared = train_questions.intersection(val_questions)
+    leaked_rows = sum(question in train_questions for question in val_questions)
+    return {"train_rows": len(train_rows), "val_rows": len(val_rows),
+            "train_questions": len(train_questions), "val_questions": len(set(val_questions)),
+            "shared_questions": len(shared), "val_rows_with_train_question": leaked_rows,
+            "val_row_leak_fraction": leaked_rows / max(len(val_rows), 1)}
+
+
 def split(args):
     from datasets import load_dataset
 
     dataset = load_dataset("peiyi9979/Math-Shepherd", split="train")
-    parts = dataset.train_test_split(test_size=args.val_fraction, seed=args.seed)
+    if args.split_by == "row":
+        # The split used for the reported results (with an unrecorded shuffle):
+        # trajectories of the same question fall on both sides.
+        parts = dataset.train_test_split(test_size=args.val_fraction, seed=args.seed)
+        parts = {"train": parts["train"], "val": parts["test"]}
+    else:
+        train_index, val_index = grouped_split(dataset, args.val_fraction, args.seed)
+        parts = {"train": dataset.select(train_index), "val": dataset.select(val_index)}
     os.makedirs(os.path.dirname(args.train_out) or ".", exist_ok=True)
-    for name, path in (("train", args.train_out), ("test", args.val_out)):
+    for name, path in (("train", args.train_out), ("val", args.val_out)):
         with open(path, "w", encoding="utf-8") as f:
             for row in parts[name]:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
         print("[split] {0:,} trajectories -> {1}".format(len(parts[name]), path))
+    print("[split] by {0}: {1}".format(args.split_by, json.dumps(
+        question_overlap(parts["train"], parts["val"]))))
+
+
+def read_jsonl(path):
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def overlap(args):
+    print(json.dumps(question_overlap(read_jsonl(args.train), read_jsonl(args.val)), indent=2))
 
 
 # A number as written in a solution: digits with optional digit-group commas
@@ -246,9 +306,19 @@ def main():
     p = sub.add_parser("split", help="Math-Shepherd train/validation split")
     p.add_argument("--val_fraction", type=float, default=0.01)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--split_by", choices=["question", "row"], default="question",
+                   help="question (default): all trajectories of a question on one side, "
+                        "assigned by a seeded hash of the normalised question text. "
+                        "row: the per-trajectory split of the reported results, which "
+                        "puts trajectories of the same question in train and validation.")
     p.add_argument("--train_out", default="data/train.jsonl")
     p.add_argument("--val_out", default="data/val.jsonl")
     p.set_defaults(func=split)
+
+    p = sub.add_parser("overlap", help="question overlap between two split files")
+    p.add_argument("--train", default="data/train.jsonl")
+    p.add_argument("--val", default="data/val.jsonl")
+    p.set_defaults(func=overlap)
 
     p = sub.add_parser("generate", help="sample Best-of-N candidates on GSM8K")
     p.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")

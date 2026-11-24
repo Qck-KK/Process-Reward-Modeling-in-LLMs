@@ -144,7 +144,7 @@ Math-Shepherd sample (`data/dummy_train.jsonl`, used by `smoke_test.py`) and the
 Best-of-N candidates (`data/gsm8k_qwen0.5b_bon16.jsonl`).
 
 ```bash
-python prepare_data.py split     # data/train.jsonl (440,208) + data/val.jsonl (4,447)
+python prepare_data.py split     # grouped by question; with --split_by row: data/train.jsonl (440,208) + data/val.jsonl (4,447)
 python prepare_data.py convert   # data/single_eval.jsonl (21,104 candidates)
 python prepare_data.py generate  # optional: re-sample the Best-of-N candidates
 ```
@@ -152,7 +152,15 @@ python prepare_data.py generate  # optional: re-sample the Best-of-N candidates
 ### 2.1 Training and Validation Sets
 
 `split` downloads `peiyi9979/Math-Shepherd` (444,655 trajectories) and holds out
-1% for validation with a fixed seed. Each line is a raw Math-Shepherd record:
+about 1% for validation with a fixed seed. By default whole questions are held
+out: a question goes to validation when a seeded SHA-256 hash of its
+normalised text (lower-cased, whitespace collapsed) falls below
+`--val_fraction`, so no question has trajectories on both sides and the split
+does not depend on row order. `--split_by row` restores the per-row split that
+the reported results used, in which trajectories of the same question appear in
+both train and validation; `prepare_data.py overlap` reports how many
+validation rows share a question with training. Each line is a raw
+Math-Shepherd record:
 
 ```json
 {"input": "question Step 1: ... ки

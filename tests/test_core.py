@@ -19,10 +19,13 @@ from eval.eval_utils import (
 )
 from dataset import parse_math_shepherd
 from prepare_data import (
+    grouped_split,
     gsm8k_gold,
     is_correct,
     last_number,
     normalize_number,
+    question_of,
+    question_overlap,
     relabel_questions,
     solution_steps,
 )
@@ -127,6 +130,52 @@ class PrepareDataTests(unittest.TestCase):
         self.assertEqual(again, records)
         with self.assertRaises(RuntimeError):
             relabel_questions(questions, [{"question": "other", "gold_answer": "1"}] * 2)
+
+
+class SplitTests(unittest.TestCase):
+    @staticmethod
+    def synthetic_rows(n_questions=300, per_question=5):
+        rows = []
+        for q in range(n_questions):
+            for t in range(per_question):
+                # Same question with different spacing/case must still group.
+                question = "What is {0} plus {0}?".format(q)
+                if t % 2:
+                    question = "  " + question.upper().replace(" ", "\n ")
+                rows.append({"input": question + " Step 1: try {0} ки".format(t),
+                             "label": question + " Step 1: try {0} +".format(t)})
+        return rows
+
+    def test_grouped_split_has_no_question_overlap(self):
+        rows = self.synthetic_rows()
+        train, val = grouped_split(rows, 0.2, seed=42)
+        self.assertEqual(sorted(train + val), list(range(len(rows))))
+        self.assertTrue(val and train)
+        stats = question_overlap([rows[i] for i in train], [rows[i] for i in val])
+        self.assertEqual(stats["shared_questions"], 0)
+        self.assertEqual(stats["val_rows_with_train_question"], 0)
+        # Whole questions: every validation question keeps all five trajectories.
+        self.assertEqual(len(val) % 5, 0)
+        self.assertAlmostEqual(len(val) / len(rows), 0.2, delta=0.06)
+
+    def test_grouped_split_is_deterministic_and_order_independent(self):
+        rows = self.synthetic_rows(100, 3)
+        _, val_a = grouped_split(rows, 0.3, seed=7)
+        _, val_b = grouped_split(rows[::-1], 0.3, seed=7)
+        questions_a = {question_of(rows[i]) for i in val_a}
+        questions_b = {question_of(rows[::-1][i]) for i in val_b}
+        self.assertEqual(questions_a, questions_b)
+        _, val_c = grouped_split(rows, 0.3, seed=8)
+        self.assertNotEqual(set(val_a), set(val_c))
+
+    def test_row_split_leaks_questions(self):
+        """What the old per-row split does with repeated questions."""
+        rows = self.synthetic_rows(50, 4)
+        generator = torch.Generator().manual_seed(0)
+        order = torch.randperm(len(rows), generator=generator).tolist()
+        val, train = order[:20], order[20:]
+        stats = question_overlap([rows[i] for i in train], [rows[i] for i in val])
+        self.assertGreater(stats["shared_questions"], 0)
 
 
 class ParserTests(unittest.TestCase):

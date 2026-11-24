@@ -207,6 +207,18 @@ the reported reference rows exactly.
 
 ## Limitations
 
+* **Validation questions also occur in training (inferred, not measured).**
+  The reported split held out 1% of Math-Shepherd *rows*, and Math-Shepherd
+  has many trajectories per question, so the validation trajectories' questions
+  are, in all likelihood, almost all also present in training. Held-out step
+  metrics therefore measure generalisation to new solutions of seen questions,
+  not to new questions; the GSM8K Best-of-N evaluation is unaffected. The
+  original `data/val.jsonl` is not in the repository, so the overlap could not
+  be measured here; `python prepare_data.py overlap --train data/train.jsonl
+  --val data/val.jsonl` measures it on the original files. `split` now groups
+  by question by default (seeded hash of the normalised question text);
+  `--split_by row` reproduces the old behaviour. No reported number has been
+  re-run on a grouped split.
 * **The learning-rate grid has no lower bound.** `3e-5` beats `1e-4` on
   development loss for five heads and the trend is monotone, so the optimum may
   lie lower. The main results keep the pre-specified `1e-4`; the full
@@ -296,7 +308,8 @@ runs/tiny_encoder` runs all stages on it on CPU in under two minutes.
 To reproduce the reported experiments:
 
 ```bash
-python prepare_data.py split       # Math-Shepherd -> data/train.jsonl, data/val.jsonl
+python prepare_data.py split       # Math-Shepherd -> data/train.jsonl, data/val.jsonl (grouped by question;
+                                   # --split_by row for the per-row split behind the reported results)
 python prepare_data.py relabel     # re-grade the bundled candidates -> data/gsm8k_qwen0.5b_bon16_relabeled.jsonl
 python prepare_data.py convert     # relabeled candidates -> data/single_eval.jsonl
 python precompute_embeddings.py --train_file data/train.jsonl --cache_dir cache/train_fixed
