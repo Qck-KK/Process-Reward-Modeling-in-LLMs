@@ -8,6 +8,7 @@ import time
 
 import torch
 
+from cached_steps import CachedSteps
 from eval.eval_utils import HEAD_CHOICES, deterministic_example_split, get_device
 from reward_heads import build_reward_head
 from pqm_loss import LOSSES
@@ -22,15 +23,32 @@ def load_shard(path, device):
     )
 
 
+def to_device(batch, device):
+    step_hidden, step_mask, labels = batch
+    return step_hidden.to(device).float(), step_mask.to(device), labels.to(device)
+
+
+def shard_file_batches(shard_paths, device):
+    for path in shard_paths:
+        yield load_shard(path, device)
+
+
 @torch.no_grad()
-def evaluate_loss(head, shard_paths, device, zeta, example_mask=None, loss_fn=LOSSES["pqm"]):
-    if not shard_paths:
+def evaluate_loss(head, shard_paths, device, zeta, example_mask=None, loss_fn=LOSSES["pqm"],
+                  store=None):
+    """Mean loss over the validation cache, one shard per batch.
+
+    With `store` (a CachedSteps of the same cache) the shards come from memory;
+    the batches, and so the loss, are identical to reading the files.
+    """
+    if not shard_paths and store is None:
         return None
     head.eval()
     running_loss, n_examples = 0.0, 0
     example_offset = 0
-    for path in shard_paths:
-        step_hidden, step_mask, labels = load_shard(path, device)
+    batches = (shard_file_batches(shard_paths, device) if store is None
+               else (to_device(b, device) for b in store.shard_batches()))
+    for step_hidden, step_mask, labels in batches:
         batch_size = step_hidden.shape[0]
         if example_mask is not None:
             selected = example_mask[example_offset:example_offset + batch_size].to(device)
@@ -102,7 +120,26 @@ def main():
                         help="Fraction of validation trajectories used for early stopping.")
     parser.add_argument("--split_seed", type=int, default=42,
                         help="Fixed trajectory split shared with evaluation scripts.")
+    parser.add_argument("--loader", choices=["memory", "shards"], default="memory",
+                        help="memory (default): load every shard once into flat tensors "
+                             "(cached_steps.py). shards: read one shard file per step, "
+                             "the original loader.")
+    parser.add_argument("--batch_size", type=int, default=0,
+                        help="Trajectories per optimiser step with --loader memory. "
+                             "0 (default): one cached shard per step, exactly the batches "
+                             "of the reported runs (16 trajectories). Larger batches "
+                             "change the optimisation and need the learning rate retuned.")
+    parser.add_argument("--merged_cache", default=None,
+                        help="With --loader memory: file to save the merged training store "
+                             "to, or to load it from if it exists.")
+    parser.add_argument("--mmap", action="store_true",
+                        help="Memory-map --merged_cache instead of reading it into RAM.")
+    parser.add_argument("--store_on_device", action="store_true",
+                        help="Keep the whole merged store on the training device (GPU), "
+                             "so batches are gathered there.")
     args = parser.parse_args()
+    if args.batch_size and args.loader != "memory":
+        parser.error("--batch_size needs --loader memory")
 
     device = get_device(args.device)
     random.seed(args.seed)
@@ -133,6 +170,24 @@ def main():
         print(f"[train] validation shards: {len(val_shard_paths)}  "
               f"early-stop trajectories: {int(validation_calibration_mask.sum())}")
 
+    train_store = val_store = None
+    if args.loader == "memory":
+        t_load = time.time()
+        train_store = CachedSteps.from_cache_dir(args.cache_dir, args.merged_cache, args.mmap)
+        if train_store.n_shards != len(shard_paths):
+            raise RuntimeError("merged cache {0} holds {1} shards, {2} has {3}".format(
+                args.merged_cache, train_store.n_shards, args.cache_dir, len(shard_paths)))
+        if val_shard_paths:
+            val_store = CachedSteps.from_shards(val_shard_paths)
+        if args.store_on_device:
+            train_store = train_store.to(device)
+            val_store = val_store.to(device) if val_store is not None else None
+        print(f"[train] loaded {train_store.n_trajectories:,} trajectories "
+              f"({train_store.hidden.shape[0]:,} steps) into memory in "
+              f"{time.time() - t_load:.1f}s; batches: "
+              + (f"{args.batch_size} trajectories" if args.batch_size else "one shard each"))
+    batch_generator = torch.Generator().manual_seed(args.seed)
+
     os.makedirs(os.path.dirname(args.save_path) or ".", exist_ok=True)
 
     head = build_reward_head(args.head, hidden_size=hidden_size).to(device)
@@ -153,6 +208,8 @@ def main():
         "zeta": args.zeta,
         "early_stopping_patience": args.early_stopping_patience,
         "max_epochs": args.epochs,
+        "loader": args.loader,
+        "batch_size": args.batch_size or "shard",
         "epoch": [],
         "train_loss": [],
         "eval_loss": [],
@@ -163,16 +220,29 @@ def main():
     best_epoch = None
     epochs_without_improvement = 0
 
+    shard_order = list(range(len(shard_paths)))
     for epoch in range(args.epochs):
-        random.shuffle(shard_paths)
+        # Shuffling a same-length index list draws the same permutation that
+        # shuffling shard_paths did, so the shard order of old runs is kept.
+        if args.loader == "shards":
+            random.shuffle(shard_paths)
+            batches = shard_file_batches(shard_paths, device)
+            n_batches = len(shard_paths)
+        elif not args.batch_size:
+            random.shuffle(shard_order)
+            batches = (to_device(b, device) for b in train_store.shard_batches(shard_order))
+            n_batches = len(shard_order)
+        else:
+            batches = (to_device(b, device)
+                       for b in train_store.random_batches(args.batch_size, batch_generator))
+            n_batches = train_store.n_batches(args.batch_size)
         t0 = time.time()
         running_loss, n_examples = 0.0, 0
         window_loss, window_examples = 0.0, 0
-        log_every = max(1, len(shard_paths) // max(args.log_points_per_epoch, 1))
+        log_every = max(1, n_batches // max(args.log_points_per_epoch, 1))
         head.train()
 
-        for batch_idx, path in enumerate(shard_paths):
-            step_hidden, step_mask, labels = load_shard(path, device)
+        for batch_idx, (step_hidden, step_mask, labels) in enumerate(batches):
 
             q_values = head(step_hidden, step_mask)
             loss = loss_fn(q_values, labels, zeta=args.zeta)
@@ -187,8 +257,8 @@ def main():
             window_loss += loss.item() * batch_size
             window_examples += batch_size
 
-            if (batch_idx + 1) % log_every == 0 or batch_idx + 1 == len(shard_paths):
-                progress = epoch + (batch_idx + 1) / len(shard_paths)
+            if (batch_idx + 1) % log_every == 0 or batch_idx + 1 == n_batches:
+                progress = epoch + (batch_idx + 1) / n_batches
                 history["train_step"].append(progress)
                 history["train_step_loss"].append(window_loss / max(window_examples, 1))
                 window_loss, window_examples = 0.0, 0
@@ -196,7 +266,8 @@ def main():
         dt = time.time() - t0
         train_loss = running_loss / max(n_examples, 1)
         eval_loss = evaluate_loss(
-            head, val_shard_paths, device, args.zeta, validation_calibration_mask, loss_fn
+            head, val_shard_paths, device, args.zeta, validation_calibration_mask, loss_fn,
+            store=val_store,
         )
         history["epoch"].append(epoch + 1)
         history["train_loss"].append(train_loss)
@@ -261,6 +332,8 @@ def main():
             "calibration_fraction": args.calibration_fraction,
             "epochs": len(history["epoch"]),
             "max_epochs": args.epochs,
+            "loader": args.loader,
+            "batch_size": args.batch_size or "shard",
             "best_epoch": best_epoch,
             "stopped_early": history["stopped_early"],
             "total_train_time_sec": total_train_time,

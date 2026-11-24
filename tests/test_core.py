@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 
 import torch
@@ -17,6 +19,7 @@ from eval.eval_utils import (
     deterministic_example_split,
     roc_auc,
 )
+from cached_steps import CachedSteps
 from dataset import parse_math_shepherd
 from prepare_data import (
     grouped_split,
@@ -179,6 +182,68 @@ class SplitTests(unittest.TestCase):
         val, train = order[:20], order[20:]
         stats = question_overlap([rows[i] for i in train], [rows[i] for i in val])
         self.assertGreater(stats["shared_questions"], 0)
+
+
+class CachedStepsTests(unittest.TestCase):
+    @staticmethod
+    def write_shards(directory, n_shards=5, rows=4, hidden=6, seed=0):
+        generator = torch.Generator().manual_seed(seed)
+        paths = []
+        for index in range(n_shards):
+            lengths = torch.randint(0, 6, (rows,), generator=generator)
+            width = max(int(lengths.max()), 1) + index % 2   # some shards wider than needed
+            mask = torch.arange(width).unsqueeze(0) < lengths.unsqueeze(1)
+            step_hidden = torch.randn(rows, width, hidden, generator=generator).half()
+            step_hidden[~mask] = 0
+            labels = torch.randint(0, 2, (rows, width), generator=generator)
+            labels[~mask] = -100
+            labels[0, 0] = -100 if mask[0, 0] else labels[0, 0]  # unlabeled valid step
+            path = os.path.join(directory, "shard_{0:06d}.pt".format(index))
+            torch.save({"step_hidden": step_hidden, "step_mask": mask, "labels": labels}, path)
+            paths.append(path)
+        return paths
+
+    def test_shard_batches_rebuild_the_shards_exactly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self.write_shards(directory)
+            store = CachedSteps.from_shards(paths)
+            for index, path in enumerate(paths):
+                shard = torch.load(path)
+                step_hidden, step_mask, labels = store.shard_batch(index)
+                self.assertTrue(torch.equal(step_hidden, shard["step_hidden"]))
+                self.assertTrue(torch.equal(step_mask, shard["step_mask"]))
+                self.assertTrue(torch.equal(labels, shard["labels"]))
+
+    def test_random_batches_cover_every_trajectory_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = CachedSteps.from_shards(self.write_shards(directory))
+            generator = torch.Generator().manual_seed(0)
+            batches = list(store.random_batches(7, generator))
+            self.assertEqual(len(batches), store.n_batches(7))
+            self.assertEqual(sum(b[0].shape[0] for b in batches), store.n_trajectories)
+            n_steps = sum(int(b[1].sum()) for b in batches)
+            self.assertEqual(n_steps, store.hidden.shape[0])
+            for step_hidden, step_mask, labels in batches:
+                self.assertTrue((step_hidden[~step_mask] == 0).all())
+                self.assertTrue((labels[~step_mask] == -100).all())
+
+    def test_saved_store_round_trips_with_mmap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = CachedSteps.from_shards(self.write_shards(directory))
+            merged = os.path.join(directory, "merged", "store.pt")
+            store.save(merged)
+            loaded = CachedSteps.from_cache_dir(directory, merged, mmap=True)
+            for a, b in zip(store.shard_batches(), loaded.shard_batches()):
+                for x, y in zip(a, b):
+                    self.assertTrue(torch.equal(x, y))
+
+    def test_non_prefix_mask_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "shard_000000.pt")
+            torch.save({"step_hidden": torch.zeros(1, 3, 2), "labels": torch.tensor([[1, -100, 1]]),
+                        "step_mask": torch.tensor([[True, False, True]])}, path)
+            with self.assertRaises(ValueError):
+                CachedSteps.from_shards([path])
 
 
 class ParserTests(unittest.TestCase):

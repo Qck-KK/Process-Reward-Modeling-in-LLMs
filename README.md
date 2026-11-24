@@ -289,6 +289,8 @@ Core pipeline:
 - `pqm_loss.py` — PQM comparative ranking loss, plus the pointwise step-BCE
   baseline it is compared against
 - `train_from_cache.py` — trains a head from cached embeddings (`--loss pqm|bce`)
+- `cached_steps.py` — in-memory (or memory-mapped) store of a cache, batches
+  of any size or exactly the original shards
 - `train_lora.py` — the LoRA arm: adapters on the encoder plus a value head
 - `run_experiments.py` — resumable driver for every cache-based experiment
   above, the LoRA arm, and their evaluation
@@ -348,6 +350,25 @@ python precompute_embeddings.py --train_file data/val.jsonl --cache_dir cache/va
 python precompute_eval_embeddings.py --eval_file data/single_eval.jsonl --cache_dir cache/single_eval
 python run_experiments.py          # everything else; --dry_run lists the steps
 ```
+
+**Training speed.** The cache holds one shard per encoder batch (16
+trajectories), and training originally read one shard file per optimiser step
+(about 27.5k steps per epoch; even the 897-parameter `linear` head took ~109 s
+per epoch on the RTX 4060). `train_from_cache.py` now loads the cache once into
+flat in-memory tensors (`cached_steps.py`, `--loader memory`, the default) and
+by default still takes one shard per step, which reproduces the old runs bit
+for bit (checked on the smoke-test cache for `linear`, `cnn`, `gru` and
+`attention`: identical checkpoints and loss histories). `--batch_size N`
+decouples the batch from the shards; larger batches change the optimisation,
+so the reported learning rates do not carry over and need retuning.
+`--merged_cache FILE --mmap` saves the merged store once and memory-maps it
+afterwards, `--store_on_device` keeps it on the GPU, and `--loader shards` is
+the original loader. The in-memory store needs about the size of the cache in
+RAM (twice that while it is first merged). On a synthetic CPU benchmark (24k
+trajectories, hidden 896; order of magnitude only, not the GPU setting) one
+shard per step from memory was at most ~1.3x faster than reading files from the
+page cache, while 256-trajectory batches made a `linear` epoch ~7x and an
+`attention` epoch ~1.7x faster.
 
 Two inputs are committed because they cannot be regenerated identically: the
 GSM8K candidates were sampled without a fixed seed (`prepare_data.py generate`
